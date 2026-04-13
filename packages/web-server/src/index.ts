@@ -27,6 +27,10 @@ import {
 } from './server-config.js';
 import { parseClientMessage, type ServerMessage } from './protocol.js';
 import { WebSessionStore } from './session-store.js';
+import {
+  createWebSlashCommandService,
+  type WebSlashCommandService,
+} from './slash-commands.js';
 
 interface WebServerOptions {
   agent: GeminiCliAgent;
@@ -34,6 +38,7 @@ interface WebServerOptions {
   cwd: string;
   policy: PolicyController;
   sessionStore?: WebSessionStore;
+  slashCommandService?: WebSlashCommandService;
 }
 
 function sendJson(ws: WebSocket, message: ServerMessage): void {
@@ -64,6 +69,7 @@ export function createWebServer({
   cwd,
   policy,
   sessionStore = new WebSessionStore(),
+  slashCommandService = createWebSlashCommandService(),
 }: WebServerOptions): http.Server {
   const app = express();
   const server = http.createServer(app);
@@ -141,6 +147,10 @@ export function createWebServer({
 
   app.get('/api/sessions', (_req, res) => {
     res.json({ sessions: sessionStore.list() });
+  });
+
+  app.get('/api/slash-commands', (_req, res) => {
+    res.json({ commands: slashCommandService.list() });
   });
 
   app.post('/api/policy', (req, res) => {
@@ -277,6 +287,29 @@ export function createWebServer({
             const msg = parseClientMessage(data.toString());
 
             if (msg.type === 'chat') {
+              const slashCommandResult = slashCommandService.execute(msg.text, {
+                sessionId: session.id,
+                sessionStore,
+                policy,
+              });
+              if (slashCommandResult.handled) {
+                sendJson(ws, {
+                  type: 'slash_command',
+                  payload: {
+                    command: slashCommandResult.command ?? '',
+                    status: slashCommandResult.status ?? 'success',
+                    message: slashCommandResult.message ?? '',
+                    action: slashCommandResult.action,
+                  },
+                });
+                sendJson(ws, {
+                  type: 'session_state',
+                  payload: sessionStore.ensure(session.id),
+                });
+                sendJson(ws, { type: 'stream_end' });
+                return;
+              }
+
               sessionStore.appendUserMessage(session.id, msg.text);
               const modelMessage = sessionStore.startModelMessage(session.id);
               const stream = session.sendStream(msg.text);

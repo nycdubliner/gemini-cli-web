@@ -11,10 +11,28 @@ import { clsx } from 'clsx';
 
 interface Message {
   id?: string;
-  role: 'user' | 'model';
+  role: 'user' | 'model' | 'system';
   content: string;
   createdAt?: string;
   isStreaming?: boolean;
+}
+
+interface SlashCommand {
+  name: string;
+  description: string;
+  usage: string;
+  altNames?: string[];
+}
+
+interface SlashCommandsResponse {
+  commands: SlashCommand[];
+}
+
+interface SlashCommandMessage {
+  command: string;
+  status: 'success' | 'error';
+  message: string;
+  action?: 'clear';
 }
 
 interface ConfirmationRequest {
@@ -120,10 +138,43 @@ function isMessage(value: unknown): value is Message {
   return (
     isRecord(value) &&
     (value['id'] === undefined || isString(value['id'])) &&
-    (value['role'] === 'user' || value['role'] === 'model') &&
+    (value['role'] === 'user' ||
+      value['role'] === 'model' ||
+      value['role'] === 'system') &&
     isString(value['content']) &&
     (value['createdAt'] === undefined || isString(value['createdAt'])) &&
     (value['isStreaming'] === undefined || isBoolean(value['isStreaming']))
+  );
+}
+
+function isSlashCommand(value: unknown): value is SlashCommand {
+  return (
+    isRecord(value) &&
+    isString(value['name']) &&
+    isString(value['description']) &&
+    isString(value['usage']) &&
+    (value['altNames'] === undefined ||
+      (Array.isArray(value['altNames']) && value['altNames'].every(isString)))
+  );
+}
+
+function isSlashCommandsResponse(
+  value: unknown,
+): value is SlashCommandsResponse {
+  return (
+    isRecord(value) &&
+    Array.isArray(value['commands']) &&
+    value['commands'].every(isSlashCommand)
+  );
+}
+
+function isSlashCommandMessage(value: unknown): value is SlashCommandMessage {
+  return (
+    isRecord(value) &&
+    isString(value['command']) &&
+    (value['status'] === 'success' || value['status'] === 'error') &&
+    isString(value['message']) &&
+    (value['action'] === undefined || value['action'] === 'clear')
   );
 }
 
@@ -154,6 +205,7 @@ export function App() {
     null,
   );
   const [metadata, setMetadata] = useState<Metadata | null>(null);
+  const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
   const ws = useRef<WebSocket | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -191,6 +243,27 @@ export function App() {
     } catch (err) {
       setConnectionError(
         err instanceof Error ? err.message : 'Failed to fetch metadata.',
+      );
+    }
+  }, [authHeaders, handleUnauthorized]);
+
+  const fetchSlashCommands = useCallback(async () => {
+    try {
+      const res = await fetch('/api/slash-commands', {
+        headers: authHeaders(),
+      });
+      if (res.status === 401) {
+        handleUnauthorized();
+        return;
+      }
+      const data: unknown = await res.json();
+      if (!isSlashCommandsResponse(data)) {
+        throw new Error('Slash command response was not valid.');
+      }
+      setSlashCommands(data.commands);
+    } catch (err) {
+      setConnectionError(
+        err instanceof Error ? err.message : 'Failed to fetch slash commands.',
       );
     }
   }, [authHeaders, handleUnauthorized]);
@@ -244,6 +317,7 @@ export function App() {
           if (didLoad) {
             setConnectionError(null);
             void fetchMetadata();
+            void fetchSlashCommands();
             return;
           }
         }
@@ -269,6 +343,7 @@ export function App() {
           setMessages(data.session.messages);
         }
         void fetchMetadata();
+        void fetchSlashCommands();
       } catch (err) {
         if (retries > 0) {
           setTimeout(() => {
@@ -284,6 +359,7 @@ export function App() {
     [
       authHeaders,
       fetchMetadata,
+      fetchSlashCommands,
       handleUnauthorized,
       loadSession,
       preferredSessionId,
@@ -358,6 +434,16 @@ export function App() {
 
       if (msg['type'] === 'session_state' && isSessionState(msg['payload'])) {
         setMessages(msg['payload'].messages);
+      } else if (
+        msg['type'] === 'slash_command' &&
+        isSlashCommandMessage(msg['payload'])
+      ) {
+        if (msg['payload'].action === 'clear') {
+          setMessages([]);
+        }
+        if (msg['payload'].command === 'yolo') {
+          void fetchMetadata();
+        }
       } else if (msg['type'] === 'gemini_event' && isRecord(msg['payload'])) {
         const payload = msg['payload'];
         if (payload['type'] === 'content' && isString(payload['value'])) {
@@ -414,7 +500,7 @@ export function App() {
       }
       socket.close();
     };
-  }, [sessionId, authToken, startSession]);
+  }, [sessionId, authToken, startSession, fetchMetadata]);
 
   const saveToken = () => {
     localStorage.setItem('gemini-web-token', pendingToken);
@@ -453,6 +539,20 @@ export function App() {
     );
     setConfirmation(null);
   };
+
+  const trimmedInput = input.trim();
+  const isSlashInput = trimmedInput === '?' || trimmedInput.startsWith('/');
+  const slashQuery = trimmedInput === '?' ? 'help' : trimmedInput.slice(1);
+  const visibleSlashCommands = isSlashInput
+    ? slashCommands
+        .filter(
+          (command) =>
+            command.name.startsWith(slashQuery) ||
+            command.usage.startsWith(`/${slashQuery}`) ||
+            (command.altNames ?? []).some((name) => name.startsWith(slashQuery)),
+        )
+        .slice(0, 6)
+    : [];
 
   if (authRequired && !authToken) {
     return (
@@ -540,6 +640,7 @@ export function App() {
             className={clsx(
               'flex gap-3 max-w-[95%]',
               m.role === 'user' ? 'ml-auto flex-row-reverse' : '',
+              m.role === 'system' ? 'max-w-full' : '',
             )}
           >
             <div
@@ -547,17 +648,31 @@ export function App() {
                 'w-6 h-6 rounded flex items-center justify-center shrink-0 mt-1',
                 m.role === 'user'
                   ? 'bg-blue-900/50 text-blue-400'
-                  : 'bg-slate-800 text-slate-400',
+                  : '',
+                m.role === 'model' ? 'bg-slate-800 text-slate-400' : '',
+                m.role === 'system'
+                  ? 'bg-emerald-900/30 text-emerald-400'
+                  : '',
               )}
             >
-              {m.role === 'user' ? <User size={14} /> : <Bot size={14} />}
+              {m.role === 'user' ? (
+                <User size={14} />
+              ) : m.role === 'system' ? (
+                <Terminal size={14} />
+              ) : (
+                <Bot size={14} />
+              )}
             </div>
             <div
               className={clsx(
                 'px-3 py-1.5 rounded-lg text-[13px] leading-relaxed',
                 m.role === 'user'
                   ? 'bg-blue-900/20 text-blue-100'
-                  : 'bg-[#161616] text-slate-200',
+                  : '',
+                m.role === 'model' ? 'bg-[#161616] text-slate-200' : '',
+                m.role === 'system'
+                  ? 'bg-emerald-950/20 text-emerald-100 border border-emerald-500/10'
+                  : '',
               )}
             >
               <ReactMarkdown className="prose prose-invert prose-xs max-w-none prose-p:my-1 prose-pre:bg-black/50 prose-code:text-pink-400">
@@ -617,6 +732,24 @@ export function App() {
 
       {/* Input Area (matches screenshot style) */}
       <div className="px-4 pb-2">
+        {visibleSlashCommands.length > 0 && (
+          <div className="mb-2 rounded border border-white/10 bg-[#111111] font-mono text-xs shadow-xl">
+            {visibleSlashCommands.map((command) => (
+              <button
+                key={command.name}
+                type="button"
+                onClick={() => {
+                  setInput(`${command.usage} `);
+                  inputRef.current?.focus();
+                }}
+                className="grid w-full grid-cols-[120px_1fr] gap-3 px-3 py-2 text-left hover:bg-white/5"
+              >
+                <span className="text-emerald-300">{command.usage}</span>
+                <span className="text-slate-400">{command.description}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <form
           onSubmit={(e) => {
             e.preventDefault();

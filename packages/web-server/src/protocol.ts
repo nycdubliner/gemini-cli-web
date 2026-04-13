@@ -24,10 +24,17 @@ export type ClientMessage = ClientChatMessage | ClientConfirmationResponse;
 
 export interface WebTranscriptMessage {
   id: string;
-  role: 'user' | 'model';
+  role: 'user' | 'model' | 'system';
   content: string;
   createdAt: string;
   isStreaming?: boolean;
+}
+
+export interface WebSlashCommand {
+  name: string;
+  description: string;
+  usage: string;
+  altNames?: string[];
 }
 
 export interface WebSessionSummary {
@@ -45,6 +52,16 @@ export interface WebSessionState {
 export interface ServerSessionStateMessage {
   type: 'session_state';
   payload: WebSessionState;
+}
+
+export interface ServerSlashCommandMessage {
+  type: 'slash_command';
+  payload: {
+    command: string;
+    status: 'success' | 'error';
+    message: string;
+    action?: 'clear';
+  };
 }
 
 export interface ServerGeminiEventMessage {
@@ -68,6 +85,7 @@ export interface ServerErrorMessage {
 
 export type ServerMessage =
   | ServerSessionStateMessage
+  | ServerSlashCommandMessage
   | ServerGeminiEventMessage
   | ServerConfirmationRequestMessage
   | ServerStreamEndMessage
