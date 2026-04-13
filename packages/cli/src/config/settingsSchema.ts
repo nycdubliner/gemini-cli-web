@@ -1982,6 +1982,16 @@ const SETTINGS_SCHEMA = {
     description: 'Setting to enable experimental features',
     showInDialog: false,
     properties: {
+      voiceMode: {
+        type: 'boolean',
+        label: 'Voice Mode',
+        category: 'Experimental',
+        requiresRestart: false,
+        default: false,
+        description:
+          'Enable experimental voice dictation and commands (/voice, /voice model).',
+        showInDialog: true,
+      },
       toolOutputMasking: {
         type: 'object',
         label: 'Tool Output Masking',
