@@ -10,8 +10,10 @@ import { Send, Bot, User, Loader2, Terminal } from 'lucide-react';
 import { clsx } from 'clsx';
 
 interface Message {
+  id?: string;
   role: 'user' | 'model';
   content: string;
+  createdAt?: string;
   isStreaming?: boolean;
 }
 
@@ -44,6 +46,16 @@ interface HealthResponse {
 
 interface SessionResponse {
   sessionId: string;
+  session?: SessionState;
+}
+
+interface SessionState {
+  sessionId: string;
+  messages: Message[];
+}
+
+interface SessionStateResponse {
+  session: SessionState;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,7 +96,35 @@ function isHealthResponse(value: unknown): value is HealthResponse {
 }
 
 function isSessionResponse(value: unknown): value is SessionResponse {
-  return isRecord(value) && isString(value['sessionId']);
+  return (
+    isRecord(value) &&
+    isString(value['sessionId']) &&
+    (value['session'] === undefined || isSessionState(value['session']))
+  );
+}
+
+function isSessionState(value: unknown): value is SessionState {
+  return (
+    isRecord(value) &&
+    isString(value['sessionId']) &&
+    Array.isArray(value['messages']) &&
+    value['messages'].every(isMessage)
+  );
+}
+
+function isSessionStateResponse(value: unknown): value is SessionStateResponse {
+  return isRecord(value) && isSessionState(value['session']);
+}
+
+function isMessage(value: unknown): value is Message {
+  return (
+    isRecord(value) &&
+    (value['id'] === undefined || isString(value['id'])) &&
+    (value['role'] === 'user' || value['role'] === 'model') &&
+    isString(value['content']) &&
+    (value['createdAt'] === undefined || isString(value['createdAt'])) &&
+    (value['isStreaming'] === undefined || isBoolean(value['isStreaming']))
+  );
 }
 
 function isConfirmationRequest(value: unknown): value is ConfirmationRequest {
@@ -99,6 +139,9 @@ function isConfirmationRequest(value: unknown): value is ConfirmationRequest {
 export function App() {
   const [authToken, setAuthToken] = useState(
     () => localStorage.getItem('gemini-web-token') ?? '',
+  );
+  const [preferredSessionId, setPreferredSessionId] = useState(
+    () => localStorage.getItem('gemini-web-session-id') ?? '',
   );
   const [pendingToken, setPendingToken] = useState(authToken);
   const [authRequired, setAuthRequired] = useState(false);
@@ -152,6 +195,39 @@ export function App() {
     }
   }, [authHeaders, handleUnauthorized]);
 
+  const loadSession = useCallback(
+    async (nextSessionId: string): Promise<boolean> => {
+      const res = await fetch(
+        `/api/sessions/${encodeURIComponent(nextSessionId)}`,
+        {
+          headers: authHeaders(),
+        },
+      );
+      if (res.status === 401) {
+        handleUnauthorized();
+        return true;
+      }
+      if (res.status === 404) {
+        return false;
+      }
+      if (!res.ok) {
+        throw new Error('Failed to load session.');
+      }
+
+      const data: unknown = await res.json();
+      if (!isSessionStateResponse(data)) {
+        throw new Error('Session state response was not valid.');
+      }
+
+      setMessages(data.session.messages);
+      setSessionId(data.session.sessionId);
+      setPreferredSessionId(data.session.sessionId);
+      localStorage.setItem('gemini-web-session-id', data.session.sessionId);
+      return true;
+    },
+    [authHeaders, handleUnauthorized],
+  );
+
   const startSession = useCallback(
     async (retries = 10) => {
       try {
@@ -160,6 +236,15 @@ export function App() {
           const healthData: unknown = await health.json();
           if (isHealthResponse(healthData)) {
             setAuthRequired(healthData.authRequired ?? false);
+          }
+        }
+
+        if (preferredSessionId) {
+          const didLoad = await loadSession(preferredSessionId);
+          if (didLoad) {
+            setConnectionError(null);
+            void fetchMetadata();
+            return;
           }
         }
 
@@ -178,6 +263,11 @@ export function App() {
         }
         setConnectionError(null);
         setSessionId(data.sessionId);
+        setPreferredSessionId(data.sessionId);
+        localStorage.setItem('gemini-web-session-id', data.sessionId);
+        if (data.session) {
+          setMessages(data.session.messages);
+        }
         void fetchMetadata();
       } catch (err) {
         if (retries > 0) {
@@ -191,7 +281,13 @@ export function App() {
         }
       }
     },
-    [authHeaders, fetchMetadata, handleUnauthorized],
+    [
+      authHeaders,
+      fetchMetadata,
+      handleUnauthorized,
+      loadSession,
+      preferredSessionId,
+    ],
   );
 
   const toggleYOLO = useCallback(async () => {
@@ -249,6 +345,10 @@ export function App() {
     );
     ws.current = socket;
 
+    socket.onopen = () => {
+      setConnectionError(null);
+    };
+
     socket.onmessage = (event) => {
       const msg: unknown = JSON.parse(String(event.data));
 
@@ -256,7 +356,9 @@ export function App() {
         return;
       }
 
-      if (msg['type'] === 'gemini_event' && isRecord(msg['payload'])) {
+      if (msg['type'] === 'session_state' && isSessionState(msg['payload'])) {
+        setMessages(msg['payload'].messages);
+      } else if (msg['type'] === 'gemini_event' && isRecord(msg['payload'])) {
         const payload = msg['payload'];
         if (payload['type'] === 'content' && isString(payload['value'])) {
           const content = payload['value'];
@@ -296,7 +398,20 @@ export function App() {
       }
     };
 
+    socket.onclose = () => {
+      if (ws.current === socket) {
+        ws.current = null;
+        setConnectionError('Connection closed. Reconnecting...');
+        setTimeout(() => {
+          setSessionId(null);
+        }, 1000);
+      }
+    };
+
     return () => {
+      if (ws.current === socket) {
+        ws.current = null;
+      }
       socket.close();
     };
   }, [sessionId, authToken, startSession]);
@@ -310,9 +425,11 @@ export function App() {
 
   const clearToken = () => {
     localStorage.removeItem('gemini-web-token');
+    localStorage.removeItem('gemini-web-session-id');
     setAuthToken('');
     setPendingToken('');
     setSessionId(null);
+    setPreferredSessionId('');
   };
 
   const sendMessage = () => {
@@ -419,7 +536,7 @@ export function App() {
         )}
         {messages.map((m, i) => (
           <div
-            key={i}
+            key={m.id ?? i}
             className={clsx(
               'flex gap-3 max-w-[95%]',
               m.role === 'user' ? 'ml-auto flex-row-reverse' : '',
