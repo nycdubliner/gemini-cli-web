@@ -175,7 +175,7 @@ describe('relaunchAppInChildProcess', () => {
       // This tests the same logic that's used in relaunchAppInChildProcess
 
       // Setup test data to verify argument ordering
-      const mockExecArgv = ['--inspect=9229', '--trace-warnings'];
+      const mockExecArgv = ['--inspect=3999', '--trace-warnings'];
       const mockArgv = [
         '/usr/bin/node',
         '/path/to/cli.js',
@@ -205,7 +205,7 @@ describe('relaunchAppInChildProcess', () => {
       // [...process.execArgv, ...additionalNodeArgs, script, ...additionalScriptArgs, ...scriptArgs]
       const expectedArgs = [
         // Original node execution arguments
-        '--inspect=9229',
+        '--inspect=3999',
         '--trace-warnings',
         // Additional node arguments passed to function
         '--max-old-space-size=4096',

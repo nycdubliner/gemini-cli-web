@@ -48,8 +48,8 @@ export class DevTools extends EventEmitter {
   private wss: WebSocketServer | null = null;
   private sessions = new Map<string, SessionInfo>();
   private heartbeatTimer: NodeJS.Timeout | null = null;
-  private port = 25417;
-  private static readonly DEFAULT_PORT = 25417;
+  private port = 3003;
+  private static readonly DEFAULT_PORT = 3003;
   private static readonly MAX_PORT_RETRIES = 10;
 
   private constructor() {

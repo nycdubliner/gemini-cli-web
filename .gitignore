@@ -47,6 +47,12 @@ packages/*/coverage/
 packages/cli/src/generated/
 packages/core/src/generated/
 packages/devtools/src/_client-assets.ts
+packages/web-client/vite.config.d.ts
+packages/web-client/vite.config.js
+packages/web-client/vite.config.js.map
+packages/web-server/src/**/*.d.ts
+packages/web-server/src/**/*.js
+packages/web-server/src/**/*.js.map
 .integration-tests/
 .perf-tests/
 packages/vscode-ide-companion/*.vsix

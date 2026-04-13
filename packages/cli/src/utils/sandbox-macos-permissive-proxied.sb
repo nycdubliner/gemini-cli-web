@@ -26,7 +26,7 @@
 
 ;; deny all inbound network traffic EXCEPT on debugger port
 (deny network-inbound)
-(allow network-inbound (local ip "localhost:9229"))
+(allow network-inbound (local ip "localhost:3999"))
 
 ;; deny all outbound network traffic EXCEPT through proxy on localhost:8877
 ;; set `GEMINI_SANDBOX_PROXY_COMMAND=<command>` to run proxy alongside sandbox

@@ -154,7 +154,7 @@ describe('devtoolsService', () => {
       expect(mockAddNetworkTransport).toHaveBeenCalledWith(
         config,
         '127.0.0.1',
-        25417,
+        3003,
         expect.any(Function),
       );
       expect(
@@ -177,7 +177,7 @@ describe('devtoolsService', () => {
       // F12: should return URL immediately
       const url = await startDevToolsServer(config);
 
-      expect(url).toBe('http://localhost:25417');
+      expect(url).toBe('http://localhost:3003');
       expect(mockAddNetworkTransport).not.toHaveBeenCalled();
       expect(mockDevToolsInstance.start).not.toHaveBeenCalled();
     });
@@ -208,8 +208,8 @@ describe('devtoolsService', () => {
   describe('startDevToolsServer', () => {
     it('starts new server when none exists and enables logging', async () => {
       const config = createMockConfig();
-      mockDevToolsInstance.start.mockResolvedValue('http://127.0.0.1:25417');
-      mockDevToolsInstance.getPort.mockReturnValue(25417);
+      mockDevToolsInstance.start.mockResolvedValue('http://127.0.0.1:3003');
+      mockDevToolsInstance.getPort.mockReturnValue(3003);
 
       const promise = startDevToolsServer(config);
 
@@ -218,11 +218,11 @@ describe('devtoolsService', () => {
 
       const url = await promise;
 
-      expect(url).toBe('http://localhost:25417');
+      expect(url).toBe('http://localhost:3003');
       expect(mockAddNetworkTransport).toHaveBeenCalledWith(
         config,
         '127.0.0.1',
-        25417,
+        3003,
         expect.any(Function),
       );
       expect(
@@ -240,7 +240,7 @@ describe('devtoolsService', () => {
 
       const url = await promise;
 
-      expect(url).toBe('http://localhost:25417');
+      expect(url).toBe('http://localhost:3003');
       expect(mockAddNetworkTransport).toHaveBeenCalled();
       expect(
         mockActivityLoggerInstance.enableNetworkLogging,
@@ -249,8 +249,8 @@ describe('devtoolsService', () => {
 
     it('deduplicates concurrent calls (returns same promise)', async () => {
       const config = createMockConfig();
-      mockDevToolsInstance.start.mockResolvedValue('http://127.0.0.1:25417');
-      mockDevToolsInstance.getPort.mockReturnValue(25417);
+      mockDevToolsInstance.start.mockResolvedValue('http://127.0.0.1:3003');
+      mockDevToolsInstance.getPort.mockReturnValue(3003);
 
       const promise1 = startDevToolsServer(config);
       const promise2 = startDevToolsServer(config);
@@ -261,8 +261,8 @@ describe('devtoolsService', () => {
       MockWebSocket.instances[0].simulateError();
 
       const [url1, url2] = await Promise.all([promise1, promise2]);
-      expect(url1).toBe('http://localhost:25417');
-      expect(url2).toBe('http://localhost:25417');
+      expect(url1).toBe('http://localhost:3003');
+      expect(url2).toBe('http://localhost:3003');
       // Only one probe + one server start
       expect(mockAddNetworkTransport).toHaveBeenCalledTimes(1);
     });
@@ -298,8 +298,8 @@ describe('devtoolsService', () => {
       await expect(promise1).rejects.toThrow('MODULE_NOT_FOUND');
 
       // Second attempt should work (not return the cached rejected promise)
-      mockDevToolsInstance.start.mockResolvedValue('http://127.0.0.1:25417');
-      mockDevToolsInstance.getPort.mockReturnValue(25417);
+      mockDevToolsInstance.start.mockResolvedValue('http://127.0.0.1:3003');
+      mockDevToolsInstance.getPort.mockReturnValue(3003);
 
       const promise2 = startDevToolsServer(config);
 
@@ -307,14 +307,14 @@ describe('devtoolsService', () => {
       MockWebSocket.instances[1].simulateError();
 
       const url = await promise2;
-      expect(url).toBe('http://localhost:25417');
+      expect(url).toBe('http://localhost:3003');
       expect(mockAddNetworkTransport).toHaveBeenCalled();
     });
 
     it('short-circuits on second F12 after successful start', async () => {
       const config = createMockConfig();
-      mockDevToolsInstance.start.mockResolvedValue('http://127.0.0.1:25417');
-      mockDevToolsInstance.getPort.mockReturnValue(25417);
+      mockDevToolsInstance.start.mockResolvedValue('http://127.0.0.1:3003');
+      mockDevToolsInstance.getPort.mockReturnValue(3003);
 
       const promise1 = startDevToolsServer(config);
 
@@ -322,14 +322,14 @@ describe('devtoolsService', () => {
       MockWebSocket.instances[0].simulateError();
 
       const url1 = await promise1;
-      expect(url1).toBe('http://localhost:25417');
+      expect(url1).toBe('http://localhost:3003');
 
       mockAddNetworkTransport.mockClear();
       mockDevToolsInstance.start.mockClear();
 
       // Second call should short-circuit via connectedUrl
       const url2 = await startDevToolsServer(config);
-      expect(url2).toBe('http://localhost:25417');
+      expect(url2).toBe('http://localhost:3003');
       expect(mockAddNetworkTransport).not.toHaveBeenCalled();
       expect(mockDevToolsInstance.start).not.toHaveBeenCalled();
     });
@@ -359,11 +359,11 @@ describe('devtoolsService', () => {
       const url = await promise;
 
       expect(mockDevToolsInstance.stop).toHaveBeenCalled();
-      expect(url).toBe('http://localhost:25417');
+      expect(url).toBe('http://localhost:3003');
       expect(mockAddNetworkTransport).toHaveBeenCalledWith(
         config,
         '127.0.0.1',
-        25417,
+        3003,
         expect.any(Function),
       );
     });
@@ -404,8 +404,8 @@ describe('devtoolsService', () => {
   describe('handlePromotion (via startDevToolsServer)', () => {
     it('caps promotion attempts at MAX_PROMOTION_ATTEMPTS', async () => {
       const config = createMockConfig();
-      mockDevToolsInstance.start.mockResolvedValue('http://127.0.0.1:25417');
-      mockDevToolsInstance.getPort.mockReturnValue(25417);
+      mockDevToolsInstance.start.mockResolvedValue('http://127.0.0.1:3003');
+      mockDevToolsInstance.getPort.mockReturnValue(3003);
 
       // First: set up the logger so we can grab onReconnectFailed
       const promise = startDevToolsServer(config);
@@ -456,8 +456,8 @@ describe('devtoolsService', () => {
 
       mockShouldLaunchBrowser.mockReturnValue(true);
       mockOpenBrowserSecurely.mockResolvedValue(undefined);
-      mockDevToolsInstance.start.mockResolvedValue('http://127.0.0.1:25417');
-      mockDevToolsInstance.getPort.mockReturnValue(25417);
+      mockDevToolsInstance.start.mockResolvedValue('http://127.0.0.1:3003');
+      mockDevToolsInstance.getPort.mockReturnValue(3003);
 
       const promise = toggleDevToolsPanel(config, false, toggle, setOpen);
 
@@ -477,8 +477,8 @@ describe('devtoolsService', () => {
 
       mockShouldLaunchBrowser.mockReturnValue(true);
       mockOpenBrowserSecurely.mockRejectedValue(new Error('no browser'));
-      mockDevToolsInstance.start.mockResolvedValue('http://127.0.0.1:25417');
-      mockDevToolsInstance.getPort.mockReturnValue(25417);
+      mockDevToolsInstance.start.mockResolvedValue('http://127.0.0.1:3003');
+      mockDevToolsInstance.getPort.mockReturnValue(3003);
 
       const promise = toggleDevToolsPanel(config, false, toggle, setOpen);
 
@@ -497,8 +497,8 @@ describe('devtoolsService', () => {
       const setOpen = vi.fn();
 
       mockShouldLaunchBrowser.mockReturnValue(false);
-      mockDevToolsInstance.start.mockResolvedValue('http://127.0.0.1:25417');
-      mockDevToolsInstance.getPort.mockReturnValue(25417);
+      mockDevToolsInstance.start.mockResolvedValue('http://127.0.0.1:3003');
+      mockDevToolsInstance.getPort.mockReturnValue(3003);
 
       const promise = toggleDevToolsPanel(config, false, toggle, setOpen);
 

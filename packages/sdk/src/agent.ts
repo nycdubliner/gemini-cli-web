@@ -23,6 +23,10 @@ export class GeminiCliAgent {
     this.options = options;
   }
 
+  updateOptions(options: Partial<GeminiCliAgentOptions>): void {
+    this.options = { ...this.options, ...options };
+  }
+
   session(options?: { sessionId?: string }): GeminiCliSession {
     const sessionId = options?.sessionId || createSessionId();
     return new GeminiCliSession(this.options, sessionId, this);

@@ -142,7 +142,7 @@ export function entrypoint(workdir: string, cliArgs: string[]): string[] {
         ? 'npm run debug --'
         : 'npm rebuild && npm run start --'
       : isDebugMode
-        ? `node --inspect-brk=0.0.0.0:${process.env['DEBUG_PORT'] || '9229'} $(which gemini)`
+        ? `node --inspect-brk=0.0.0.0:${process.env['DEBUG_PORT'] || '3999'} $(which gemini)`
         : 'gemini';
 
   const args = [...shellCmds, cliCmd, ...quotedCliArgs];
