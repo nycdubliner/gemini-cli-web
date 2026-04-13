@@ -21,7 +21,8 @@ import {
   loadSkillsFromDir,
   ActivateSkillTool,
   type ResumedSessionData,
-  PolicyDecision,
+  type MessageBus,
+  type ApprovalMode,
 } from '@google/gemini-cli-core';
 
 import { type Tool, SdkTool } from './tool.js';
@@ -62,6 +63,18 @@ export class GeminiCliSession {
       throw new Error('Instructions must be a string or a function.');
     }
 
+    const policyEngineConfig =
+      options.policyDecision || options.approvalMode
+        ? {
+            ...(options.policyDecision
+              ? { defaultDecision: options.policyDecision }
+              : {}),
+            ...(options.approvalMode
+              ? { approvalMode: options.approvalMode }
+              : {}),
+          }
+        : undefined;
+
     const configParams: ConfigParameters = {
       sessionId: this.sessionId,
       targetDir: cwd,
@@ -77,10 +90,7 @@ export class GeminiCliSession {
       fakeResponses: options.fakeResponses,
       skillsSupport: true,
       adminSkillsEnabled: true,
-      policyEngineConfig: {
-        // TODO: Revisit this default when we have a mechanism for wiring up approvals
-        defaultDecision: PolicyDecision.ALLOW,
-      },
+      policyEngineConfig,
     };
 
     this.config = new Config(configParams);
@@ -88,6 +98,18 @@ export class GeminiCliSession {
 
   get id(): string {
     return this.sessionId;
+  }
+
+  get messageBus(): MessageBus {
+    return this.config.messageBus;
+  }
+
+  getApprovalMode(): ApprovalMode {
+    return this.config.getApprovalMode();
+  }
+
+  setApprovalMode(mode: ApprovalMode): void {
+    this.config.setApprovalMode(mode);
   }
 
   async initialize(): Promise<void> {

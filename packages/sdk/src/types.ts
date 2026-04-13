@@ -4,7 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { Content } from '@google/gemini-cli-core';
+import type {
+  ApprovalMode,
+  Content,
+  PolicyDecision,
+} from '@google/gemini-cli-core';
 import type { Tool } from './tool.js';
 import type { SkillReference } from './skills.js';
 import type { GeminiCliAgent } from './agent.js';
@@ -24,6 +28,8 @@ export interface GeminiCliAgentOptions {
   debug?: boolean;
   recordResponses?: string;
   fakeResponses?: string;
+  policyDecision?: PolicyDecision;
+  approvalMode?: ApprovalMode;
 }
 
 export interface AgentFilesystem {
