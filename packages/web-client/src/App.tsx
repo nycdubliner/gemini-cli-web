@@ -98,6 +98,7 @@ interface Metadata {
   allowAll: boolean;
   model: string;
   sandbox: string;
+  connectedClients: number;
 }
 
 interface HealthResponse {
@@ -160,7 +161,8 @@ function isMetadata(value: unknown): value is Metadata {
     isString(value['approvalMode']) &&
     isBoolean(value['allowAll']) &&
     isString(value['model']) &&
-    isString(value['sandbox'])
+    isString(value['sandbox']) &&
+    isNumber(value['connectedClients'])
   );
 }
 
@@ -817,6 +819,8 @@ export function App() {
           <span>{metadata?.mcpServersCount ?? 0} MCP servers</span>
           <span className="opacity-30">•</span>
           <span>{metadata?.skillsCount ?? 0} skills</span>
+          <span className="opacity-30">•</span>
+          <span>{metadata?.connectedClients ?? 0} clients</span>
         </div>
       </div>
 

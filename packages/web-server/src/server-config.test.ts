@@ -5,7 +5,11 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import {
+  getCorsAllowOrigin,
   getRequestToken,
   isAuthorized,
   loadWebServerConfig,
@@ -17,6 +21,7 @@ describe('loadWebServerConfig', () => {
       host: '127.0.0.1',
       port: 3001,
       authToken: undefined,
+      authTokenFile: undefined,
       authRequired: false,
       allowedOrigin: undefined,
     });
@@ -40,8 +45,25 @@ describe('loadWebServerConfig', () => {
       host: '0.0.0.0',
       port: 3001,
       authToken: 'secret',
+      authTokenFile: undefined,
       authRequired: true,
       allowedOrigin: 'http://example.local:3000',
+    });
+  });
+
+  it('supports token files for reloadable LAN tokens', () => {
+    expect(
+      loadWebServerConfig({
+        WEB_HOST: '0.0.0.0',
+        GEMINI_WEB_TOKEN_FILE: '/tmp/gemini-web-token',
+      }),
+    ).toEqual({
+      host: '0.0.0.0',
+      port: 3001,
+      authToken: undefined,
+      authTokenFile: '/tmp/gemini-web-token',
+      authRequired: true,
+      allowedOrigin: undefined,
     });
   });
 });
@@ -64,5 +86,43 @@ describe('request auth helpers', () => {
     expect(getRequestToken(undefined, '/ws/session?token=secret')).toBe(
       'secret',
     );
+  });
+
+  it('reloads tokens from a token file', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'gemini-token-'));
+    const tokenFile = path.join(dir, 'token');
+    await writeFile(tokenFile, 'first\n');
+
+    const config = { authRequired: true, authTokenFile: tokenFile };
+    expect(isAuthorized(config, { authorization: 'Bearer first' })).toBe(true);
+
+    await writeFile(tokenFile, 'second\n');
+    expect(isAuthorized(config, { authorization: 'Bearer first' })).toBe(false);
+    expect(isAuthorized(config, { authorization: 'Bearer second' })).toBe(true);
+
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('getCorsAllowOrigin', () => {
+  it('allows wildcard CORS only when auth is disabled', () => {
+    expect(
+      getCorsAllowOrigin({ authRequired: false }, 'http://example.com'),
+    ).toBe('*');
+  });
+
+  it('allows the configured origin', () => {
+    expect(
+      getCorsAllowOrigin(
+        { authRequired: true, allowedOrigin: 'http://example.com' },
+        'http://example.com',
+      ),
+    ).toBe('http://example.com');
+  });
+
+  it('does not allow arbitrary origins in authenticated LAN mode', () => {
+    expect(
+      getCorsAllowOrigin({ authRequired: true }, 'http://evil.example'),
+    ).toBeUndefined();
   });
 });
