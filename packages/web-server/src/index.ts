@@ -335,6 +335,7 @@ export function createWebServer({
         const removeSession = policy.addSession(session);
 
         const messageBus = session.messageBus;
+        let activeAbortController: AbortController | undefined;
         connectedClients.set(ws, {
           id: String(nextClientId++),
           sessionId: session.id,
@@ -400,6 +401,7 @@ export function createWebServer({
               }
 
               audit('prompt', session.id, msg.text);
+              activeAbortController = new AbortController();
               const processedPrompt = await processFileReferences(
                 msg.text,
                 cwd,
@@ -418,21 +420,43 @@ export function createWebServer({
                 });
               }
               const modelMessage = sessionStore.startModelMessage(session.id);
-              const stream = session.sendStream(processedPrompt.prompt);
-              for await (const event of stream) {
-                if (event.type === GeminiEventType.Content) {
-                  sessionStore.appendModelChunk(
-                    session.id,
-                    modelMessage.id,
-                    event.value,
-                  );
+              const runController = activeAbortController;
+              let wasCancelled = false;
+              try {
+                const stream = session.sendStream(
+                  processedPrompt.prompt,
+                  runController.signal,
+                );
+                for await (const event of stream) {
+                  if (event.type === GeminiEventType.Content) {
+                    sessionStore.appendModelChunk(
+                      session.id,
+                      modelMessage.id,
+                      event.value,
+                    );
+                  }
+                  sendJson(ws, {
+                    type: 'gemini_event',
+                    payload: event,
+                  });
                 }
-                sendJson(ws, {
-                  type: 'gemini_event',
-                  payload: event,
-                });
+              } catch (error) {
+                if (runController.signal.aborted) {
+                  wasCancelled = true;
+                } else {
+                  throw error;
+                }
+              } finally {
+                activeAbortController = undefined;
               }
               sessionStore.finishModelMessage(session.id, modelMessage.id);
+              if (wasCancelled) {
+                sessionStore.appendSystemMessage(session.id, 'Run cancelled.');
+                sendJson(ws, {
+                  type: 'session_state',
+                  payload: sessionStore.ensure(session.id),
+                });
+              }
               sendJson(ws, { type: 'stream_end' });
             } else if (msg.type === 'confirmation_response') {
               audit(
@@ -446,6 +470,8 @@ export function createWebServer({
                 confirmed: msg.confirmed,
                 outcome: msg.outcome,
               });
+            } else if (msg.type === 'cancel_stream') {
+              activeAbortController?.abort();
             }
           } catch (error) {
             console.error('Error handling WebSocket message:', error);
