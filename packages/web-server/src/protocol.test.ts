@@ -27,6 +27,19 @@ describe('parseClientMessage', () => {
     });
   });
 
+  it('parses confirmation responses with explicit outcomes', () => {
+    expect(
+      parseClientMessage(
+        '{"type":"confirmation_response","correlationId":"abc","confirmed":true,"outcome":"proceed_always"}',
+      ),
+    ).toEqual({
+      type: 'confirmation_response',
+      correlationId: 'abc',
+      confirmed: true,
+      outcome: 'proceed_always',
+    });
+  });
+
   it('rejects malformed messages', () => {
     expect(() => parseClientMessage('{"type":"chat"}')).toThrow(
       /Invalid client message/,

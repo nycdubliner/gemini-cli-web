@@ -16,6 +16,7 @@ import { GeminiCliAgent } from '@google/gemini-cli-sdk';
 import {
   GeminiEventType,
   MessageBusType,
+  type ToolCallsUpdateMessage,
   type ToolConfirmationRequest,
 } from '@google/gemini-cli-core';
 import { createPolicyController, type PolicyController } from './policy.js';
@@ -308,11 +309,21 @@ export function createWebServer({
             payload: message,
           });
         };
+        const onToolCallsUpdate = (message: ToolCallsUpdateMessage) => {
+          sendJson(ws, {
+            type: 'tool_calls_update',
+            payload: {
+              toolCalls: message.toolCalls,
+              schedulerId: message.schedulerId,
+            },
+          });
+        };
 
         messageBus.on(
           MessageBusType.TOOL_CONFIRMATION_REQUEST,
           onConfirmationRequest,
         );
+        messageBus.on(MessageBusType.TOOL_CALLS_UPDATE, onToolCallsUpdate);
 
         ws.on('message', async (data) => {
           try {
@@ -368,11 +379,11 @@ export function createWebServer({
                     modelMessage.id,
                     event.value,
                   );
-                  sendJson(ws, {
-                    type: 'gemini_event',
-                    payload: event,
-                  });
                 }
+                sendJson(ws, {
+                  type: 'gemini_event',
+                  payload: event,
+                });
               }
               sessionStore.finishModelMessage(session.id, modelMessage.id);
               sendJson(ws, { type: 'stream_end' });
@@ -381,6 +392,7 @@ export function createWebServer({
                 type: MessageBusType.TOOL_CONFIRMATION_RESPONSE,
                 correlationId: msg.correlationId,
                 confirmed: msg.confirmed,
+                outcome: msg.outcome,
               });
             }
           } catch (error) {
@@ -395,6 +407,7 @@ export function createWebServer({
             MessageBusType.TOOL_CONFIRMATION_REQUEST,
             onConfirmationRequest,
           );
+          messageBus.off(MessageBusType.TOOL_CALLS_UPDATE, onToolCallsUpdate);
           removeSession();
         });
       } catch (error) {

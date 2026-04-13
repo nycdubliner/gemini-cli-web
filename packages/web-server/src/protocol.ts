@@ -6,7 +6,9 @@
 
 import type {
   ServerGeminiStreamEvent,
+  ToolCallsUpdateMessage,
   ToolConfirmationRequest,
+  ToolConfirmationOutcome,
 } from '@google/gemini-cli-core';
 
 export interface ClientChatMessage {
@@ -18,6 +20,7 @@ export interface ClientConfirmationResponse {
   type: 'confirmation_response';
   correlationId: string;
   confirmed: boolean;
+  outcome?: ToolConfirmationOutcome;
 }
 
 export type ClientMessage = ClientChatMessage | ClientConfirmationResponse;
@@ -74,6 +77,11 @@ export interface ServerConfirmationRequestMessage {
   payload: ToolConfirmationRequest;
 }
 
+export interface ServerToolCallsUpdateMessage {
+  type: 'tool_calls_update';
+  payload: Omit<ToolCallsUpdateMessage, 'type'>;
+}
+
 export interface ServerStreamEndMessage {
   type: 'stream_end';
 }
@@ -88,6 +96,7 @@ export type ServerMessage =
   | ServerSlashCommandMessage
   | ServerGeminiEventMessage
   | ServerConfirmationRequestMessage
+  | ServerToolCallsUpdateMessage
   | ServerStreamEndMessage
   | ServerErrorMessage;
 
@@ -101,6 +110,20 @@ function isString(value: unknown): value is string {
 
 function isBoolean(value: unknown): value is boolean {
   return typeof value === 'boolean';
+}
+
+function isToolConfirmationOutcome(
+  value: unknown,
+): value is ToolConfirmationOutcome {
+  return (
+    value === 'proceed_once' ||
+    value === 'proceed_always' ||
+    value === 'proceed_always_and_save' ||
+    value === 'proceed_always_server' ||
+    value === 'proceed_always_tool' ||
+    value === 'modify_with_editor' ||
+    value === 'cancel'
+  );
 }
 
 export function parseClientMessage(data: string): ClientMessage {
@@ -123,6 +146,9 @@ export function parseClientMessage(data: string): ClientMessage {
       type: 'confirmation_response',
       correlationId: parsed['correlationId'],
       confirmed: parsed['confirmed'],
+      ...(isToolConfirmationOutcome(parsed['outcome'])
+        ? { outcome: parsed['outcome'] }
+        : {}),
     };
   }
 
