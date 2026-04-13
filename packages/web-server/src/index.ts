@@ -22,6 +22,7 @@ import {
 import { createPolicyController, type PolicyController } from './policy.js';
 import {
   getRequestToken,
+  getCorsAllowOrigin,
   isAuthorized,
   loadWebServerConfig,
   type WebServerConfig,
@@ -45,6 +46,21 @@ interface WebServerOptions {
   policy: PolicyController;
   sessionStore?: WebSessionStore;
   slashCommandService?: WebSlashCommandService;
+}
+
+interface ConnectedClient {
+  id: string;
+  sessionId: string;
+  address: string;
+  connectedAt: string;
+}
+
+interface AuditEvent {
+  id: number;
+  type: 'prompt' | 'tool_approval';
+  sessionId: string;
+  timestamp: string;
+  detail: string;
 }
 
 function sendJson(ws: WebSocket, message: ServerMessage): void {
@@ -85,15 +101,32 @@ export function createWebServer({
   const server = http.createServer(app);
   const wss = new WebSocketServer({ noServer: true });
   const webClientDist = path.resolve(cwd, 'packages/web-client/dist');
+  const connectedClients = new Map<WebSocket, ConnectedClient>();
+  const auditEvents: AuditEvent[] = [];
+  let nextClientId = 1;
+  let nextAuditId = 1;
+
+  const audit = (
+    type: AuditEvent['type'],
+    sessionId: string,
+    detail: string,
+  ) => {
+    auditEvents.push({
+      id: nextAuditId++,
+      type,
+      sessionId,
+      timestamp: new Date().toISOString(),
+      detail,
+    });
+    if (auditEvents.length > 200) {
+      auditEvents.splice(0, auditEvents.length - 200);
+    }
+  };
 
   app.use((req, res, next) => {
-    const requestOrigin = req.headers.origin;
-    if (config.allowedOrigin) {
-      if (requestOrigin === config.allowedOrigin) {
-        res.header('Access-Control-Allow-Origin', config.allowedOrigin);
-      }
-    } else if (!config.authRequired) {
-      res.header('Access-Control-Allow-Origin', '*');
+    const allowedOrigin = getCorsAllowOrigin(config, req.headers.origin);
+    if (allowedOrigin) {
+      res.header('Access-Control-Allow-Origin', allowedOrigin);
     }
 
     res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
@@ -152,7 +185,14 @@ export function createWebServer({
       allowAll: policySnapshot.allowAll,
       model: 'Auto (Gemini 3)',
       sandbox: 'no sandbox',
+      connectedClients: connectedClients.size,
+      clients: Array.from(connectedClients.values()),
+      auditEvents: auditEvents.slice(-20),
     });
+  });
+
+  app.get('/api/audit-log', (_req, res) => {
+    res.json({ events: auditEvents.slice(-100) });
   });
 
   app.get('/api/sessions', (_req, res) => {
@@ -281,7 +321,7 @@ export function createWebServer({
     'connection',
     async (
       ws: WebSocket,
-      _request: http.IncomingMessage,
+      request: http.IncomingMessage,
       sessionId: string,
     ) => {
       console.log(`WebSocket connected for session: ${sessionId}`);
@@ -295,6 +335,12 @@ export function createWebServer({
         const removeSession = policy.addSession(session);
 
         const messageBus = session.messageBus;
+        connectedClients.set(ws, {
+          id: String(nextClientId++),
+          sessionId: session.id,
+          address: request.socket.remoteAddress ?? 'unknown',
+          connectedAt: new Date().toISOString(),
+        });
 
         sendJson(ws, {
           type: 'session_state',
@@ -353,6 +399,7 @@ export function createWebServer({
                 return;
               }
 
+              audit('prompt', session.id, msg.text);
               const processedPrompt = await processFileReferences(
                 msg.text,
                 cwd,
@@ -388,6 +435,11 @@ export function createWebServer({
               sessionStore.finishModelMessage(session.id, modelMessage.id);
               sendJson(ws, { type: 'stream_end' });
             } else if (msg.type === 'confirmation_response') {
+              audit(
+                'tool_approval',
+                session.id,
+                `${msg.outcome ?? (msg.confirmed ? 'allow' : 'deny')} ${msg.correlationId}`,
+              );
               void messageBus.publish({
                 type: MessageBusType.TOOL_CONFIRMATION_RESPONSE,
                 correlationId: msg.correlationId,
@@ -408,6 +460,7 @@ export function createWebServer({
             onConfirmationRequest,
           );
           messageBus.off(MessageBusType.TOOL_CALLS_UPDATE, onToolCallsUpdate);
+          connectedClients.delete(ws);
           removeSession();
         });
       } catch (error) {
