@@ -7,6 +7,8 @@
 /* eslint-disable no-console */
 
 import { execSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import express from 'express';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -24,12 +26,14 @@ import {
   type WebServerConfig,
 } from './server-config.js';
 import { parseClientMessage, type ServerMessage } from './protocol.js';
+import { WebSessionStore } from './session-store.js';
 
 interface WebServerOptions {
   agent: GeminiCliAgent;
   config: WebServerConfig;
   cwd: string;
   policy: PolicyController;
+  sessionStore?: WebSessionStore;
 }
 
 function sendJson(ws: WebSocket, message: ServerMessage): void {
@@ -59,10 +63,12 @@ export function createWebServer({
   config,
   cwd,
   policy,
+  sessionStore = new WebSessionStore(),
 }: WebServerOptions): http.Server {
   const app = express();
   const server = http.createServer(app);
   const wss = new WebSocketServer({ noServer: true });
+  const webClientDist = path.resolve(cwd, 'packages/web-client/dist');
 
   app.use((req, res, next) => {
     const requestOrigin = req.headers.origin;
@@ -133,6 +139,10 @@ export function createWebServer({
     });
   });
 
+  app.get('/api/sessions', (_req, res) => {
+    res.json({ sessions: sessionStore.list() });
+  });
+
   app.post('/api/policy', (req, res) => {
     if (typeof req.body?.allowAll !== 'boolean') {
       res.status(400).json({ error: 'allowAll must be a boolean' });
@@ -146,11 +156,58 @@ export function createWebServer({
     try {
       const session = agent.session();
       await session.initialize();
-      res.json({ sessionId: session.id });
+      const state = sessionStore.ensure(session.id);
+      res.json({ sessionId: session.id, session: state });
     } catch (error) {
       console.error('Failed to create session:', error);
       res.status(500).json({ error: String(error) });
     }
+  });
+
+  app.get('/api/sessions/:sessionId', (req, res) => {
+    const sessionId = req.params['sessionId'];
+    if (!sessionId) {
+      res.status(400).json({ error: 'Missing sessionId' });
+      return;
+    }
+
+    const session = sessionStore.get(sessionId);
+    if (!session) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+
+    res.json({ session });
+  });
+
+  app.delete('/api/sessions/:sessionId', (req, res) => {
+    const sessionId = req.params['sessionId'];
+    if (!sessionId) {
+      res.status(400).json({ error: 'Missing sessionId' });
+      return;
+    }
+
+    res.json({ deleted: sessionStore.delete(sessionId) });
+  });
+
+  app.use(express.static(webClientDist));
+
+  app.use((req, res, next) => {
+    if (req.method !== 'GET') {
+      next();
+      return;
+    }
+
+    if (req.path.startsWith('/api') || req.path.startsWith('/ws')) {
+      next();
+      return;
+    }
+
+    res.sendFile(path.join(webClientDist, 'index.html'), (error) => {
+      if (error) {
+        next();
+      }
+    });
   });
 
   server.on('upgrade', (request, socket, head) => {
@@ -191,9 +248,15 @@ export function createWebServer({
           .resumeSession(sessionId)
           .catch(() => agent.session({ sessionId }));
         await session.initialize();
+        const state = sessionStore.ensure(session.id);
         const removeSession = policy.addSession(session);
 
         const messageBus = session.messageBus;
+
+        sendJson(ws, {
+          type: 'session_state',
+          payload: state,
+        });
 
         const onConfirmationRequest = async (
           message: ToolConfirmationRequest,
@@ -214,15 +277,23 @@ export function createWebServer({
             const msg = parseClientMessage(data.toString());
 
             if (msg.type === 'chat') {
+              sessionStore.appendUserMessage(session.id, msg.text);
+              const modelMessage = sessionStore.startModelMessage(session.id);
               const stream = session.sendStream(msg.text);
               for await (const event of stream) {
                 if (event.type === GeminiEventType.Content) {
+                  sessionStore.appendModelChunk(
+                    session.id,
+                    modelMessage.id,
+                    event.value,
+                  );
                   sendJson(ws, {
                     type: 'gemini_event',
                     payload: event,
                   });
                 }
               }
+              sessionStore.finishModelMessage(session.id, modelMessage.id);
               sendJson(ws, { type: 'stream_end' });
             } else if (msg.type === 'confirmation_response') {
               void messageBus.publish({
@@ -255,26 +326,32 @@ export function createWebServer({
   return server;
 }
 
-const config = loadWebServerConfig(process.env);
-const agent = new GeminiCliAgent({
-  instructions:
-    'You are a helpful assistant running in a web-based Gemini CLI interface.',
-  debug: true,
-  cwd: process.cwd(),
-});
-const policy = createPolicyController(agent);
-const server = createWebServer({
-  agent,
-  config,
-  cwd: process.cwd(),
-  policy,
-});
+function start(): void {
+  const config = loadWebServerConfig(process.env);
+  const agent = new GeminiCliAgent({
+    instructions:
+      'You are a helpful assistant running in a web-based Gemini CLI interface.',
+    debug: true,
+    cwd: process.cwd(),
+  });
+  const policy = createPolicyController(agent);
+  const server = createWebServer({
+    agent,
+    config,
+    cwd: process.cwd(),
+    policy,
+  });
 
-server.listen(config.port, config.host, () => {
-  console.log(
-    `Web API server listening on http://${config.host}:${config.port}`,
-  );
-  if (config.authRequired) {
-    console.log('Web API authentication is enabled with GEMINI_WEB_TOKEN.');
-  }
-});
+  server.listen(config.port, config.host, () => {
+    console.log(
+      `Web API server listening on http://${config.host}:${config.port}`,
+    );
+    if (config.authRequired) {
+      console.log('Web API authentication is enabled with GEMINI_WEB_TOKEN.');
+    }
+  });
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  start();
+}

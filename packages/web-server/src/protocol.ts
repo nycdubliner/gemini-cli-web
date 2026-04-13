@@ -22,6 +22,31 @@ export interface ClientConfirmationResponse {
 
 export type ClientMessage = ClientChatMessage | ClientConfirmationResponse;
 
+export interface WebTranscriptMessage {
+  id: string;
+  role: 'user' | 'model';
+  content: string;
+  createdAt: string;
+  isStreaming?: boolean;
+}
+
+export interface WebSessionSummary {
+  sessionId: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+}
+
+export interface WebSessionState {
+  sessionId: string;
+  messages: WebTranscriptMessage[];
+}
+
+export interface ServerSessionStateMessage {
+  type: 'session_state';
+  payload: WebSessionState;
+}
+
 export interface ServerGeminiEventMessage {
   type: 'gemini_event';
   payload: ServerGeminiStreamEvent;
@@ -42,6 +67,7 @@ export interface ServerErrorMessage {
 }
 
 export type ServerMessage =
+  | ServerSessionStateMessage
   | ServerGeminiEventMessage
   | ServerConfirmationRequestMessage
   | ServerStreamEndMessage
