@@ -31,6 +31,11 @@ import {
   createWebSlashCommandService,
   type WebSlashCommandService,
 } from './slash-commands.js';
+import {
+  previewWorkspaceReference,
+  processFileReferences,
+  searchWorkspaceReferences,
+} from './file-references.js';
 
 interface WebServerOptions {
   agent: GeminiCliAgent;
@@ -43,6 +48,10 @@ interface WebServerOptions {
 
 function sendJson(ws: WebSocket, message: ServerMessage): void {
   ws.send(JSON.stringify(message));
+}
+
+function getQueryParam(value: unknown): string {
+  return typeof value === 'string' ? value : '';
 }
 
 function readCommand(command: string, cwd: string, fallback: string): string {
@@ -151,6 +160,29 @@ export function createWebServer({
 
   app.get('/api/slash-commands', (_req, res) => {
     res.json({ commands: slashCommandService.list() });
+  });
+
+  app.get('/api/references/search', async (req, res) => {
+    const query = getQueryParam(req.query['q']);
+    try {
+      res.json({ results: await searchWorkspaceReferences(cwd, query) });
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.get('/api/references/preview', async (req, res) => {
+    const referencePath = getQueryParam(req.query['path']);
+    if (!referencePath) {
+      res.status(400).json({ error: 'Missing path' });
+      return;
+    }
+
+    try {
+      res.json({ preview: await previewWorkspaceReference(cwd, referencePath) });
+    } catch (error) {
+      res.status(400).json({ error: String(error) });
+    }
   });
 
   app.post('/api/policy', (req, res) => {
@@ -310,9 +342,25 @@ export function createWebServer({
                 return;
               }
 
+              const processedPrompt = await processFileReferences(
+                msg.text,
+                cwd,
+              );
               sessionStore.appendUserMessage(session.id, msg.text);
+              if (processedPrompt.references.length > 0) {
+                sessionStore.appendSystemMessage(
+                  session.id,
+                  `Attached references: ${processedPrompt.references
+                    .map((reference) => `@${reference.path}`)
+                    .join(', ')}`,
+                );
+                sendJson(ws, {
+                  type: 'session_state',
+                  payload: sessionStore.ensure(session.id),
+                });
+              }
               const modelMessage = sessionStore.startModelMessage(session.id);
-              const stream = session.sendStream(msg.text);
+              const stream = session.sendStream(processedPrompt.prompt);
               for await (const event of stream) {
                 if (event.type === GeminiEventType.Content) {
                   sessionStore.appendModelChunk(

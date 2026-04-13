@@ -35,6 +35,24 @@ interface SlashCommandMessage {
   action?: 'clear';
 }
 
+interface ReferenceSearchResult {
+  path: string;
+  type: 'file' | 'directory';
+}
+
+interface ReferenceSearchResponse {
+  results: ReferenceSearchResult[];
+}
+
+interface ReferencePreview extends ReferenceSearchResult {
+  content: string;
+  truncated: boolean;
+}
+
+interface ReferencePreviewResponse {
+  preview: ReferencePreview;
+}
+
 interface ConfirmationRequest {
   correlationId: string;
   toolCall: {
@@ -90,6 +108,19 @@ function isNumber(value: unknown): value is number {
 
 function isBoolean(value: unknown): value is boolean {
   return typeof value === 'boolean';
+}
+
+function getActiveReferenceQuery(value: string): string | null {
+  const match = /(?:^|\s)@([^\s]*)$/.exec(value);
+  return match ? match[1] : null;
+}
+
+function replaceActiveReference(value: string, referencePath: string): string {
+  return value.replace(/(^|\s)@([^\s]*)$/, `$1@${referencePath} `);
+}
+
+function getReferenceChips(value: string): string[] {
+  return Array.from(value.matchAll(/(?:^|\s)@([^\s]+)/g), (match) => match[1]);
 }
 
 function isMetadata(value: unknown): value is Metadata {
@@ -178,6 +209,41 @@ function isSlashCommandMessage(value: unknown): value is SlashCommandMessage {
   );
 }
 
+function isReferenceSearchResult(
+  value: unknown,
+): value is ReferenceSearchResult {
+  return (
+    isRecord(value) &&
+    isString(value['path']) &&
+    (value['type'] === 'file' || value['type'] === 'directory')
+  );
+}
+
+function isReferenceSearchResponse(
+  value: unknown,
+): value is ReferenceSearchResponse {
+  return (
+    isRecord(value) &&
+    Array.isArray(value['results']) &&
+    value['results'].every(isReferenceSearchResult)
+  );
+}
+
+function isReferencePreview(value: unknown): value is ReferencePreview {
+  return (
+    isRecord(value) &&
+    isReferenceSearchResult(value) &&
+    isString(value['content']) &&
+    isBoolean(value['truncated'])
+  );
+}
+
+function isReferencePreviewResponse(
+  value: unknown,
+): value is ReferencePreviewResponse {
+  return isRecord(value) && isReferencePreview(value['preview']);
+}
+
 function isConfirmationRequest(value: unknown): value is ConfirmationRequest {
   return (
     isRecord(value) &&
@@ -206,6 +272,11 @@ export function App() {
   );
   const [metadata, setMetadata] = useState<Metadata | null>(null);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
+  const [referenceResults, setReferenceResults] = useState<
+    ReferenceSearchResult[]
+  >([]);
+  const [referencePreview, setReferencePreview] =
+    useState<ReferencePreview | null>(null);
   const ws = useRef<WebSocket | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -267,6 +338,31 @@ export function App() {
       );
     }
   }, [authHeaders, handleUnauthorized]);
+
+  const fetchReferencePreview = useCallback(
+    async (referencePath: string) => {
+      try {
+        const res = await fetch(
+          `/api/references/preview?path=${encodeURIComponent(referencePath)}`,
+          { headers: authHeaders() },
+        );
+        if (res.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+        const data: unknown = await res.json();
+        if (!isReferencePreviewResponse(data)) {
+          throw new Error('Reference preview response was not valid.');
+        }
+        setReferencePreview(data.preview);
+      } catch (err) {
+        setConnectionError(
+          err instanceof Error ? err.message : 'Failed to fetch preview.',
+        );
+      }
+    },
+    [authHeaders, handleUnauthorized],
+  );
 
   const loadSession = useCallback(
     async (nextSessionId: string): Promise<boolean> => {
@@ -405,6 +501,52 @@ export function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [toggleYOLO]);
+
+  useEffect(() => {
+    const referenceQuery = getActiveReferenceQuery(input);
+    if (referenceQuery === null) {
+      setReferenceResults([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(
+            `/api/references/search?q=${encodeURIComponent(referenceQuery)}`,
+            {
+              headers: authHeaders(),
+              signal: controller.signal,
+            },
+          );
+          if (res.status === 401) {
+            handleUnauthorized();
+            return;
+          }
+          const data: unknown = await res.json();
+          if (!isReferenceSearchResponse(data)) {
+            throw new Error('Reference search response was not valid.');
+          }
+          setReferenceResults(data.results.slice(0, 6));
+        } catch (err) {
+          if (err instanceof DOMException && err.name === 'AbortError') {
+            return;
+          }
+          setConnectionError(
+            err instanceof Error
+              ? err.message
+              : 'Failed to search references.',
+          );
+        }
+      })();
+    }, 150);
+
+    return () => {
+      controller.abort();
+      clearTimeout(timeout);
+    };
+  }, [authHeaders, handleUnauthorized, input]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -553,6 +695,7 @@ export function App() {
         )
         .slice(0, 6)
     : [];
+  const referenceChips = getReferenceChips(input);
 
   if (authRequired && !authToken) {
     return (
@@ -732,6 +875,63 @@ export function App() {
 
       {/* Input Area (matches screenshot style) */}
       <div className="px-4 pb-2">
+        {referencePreview && (
+          <div className="mb-2 rounded border border-emerald-500/20 bg-[#111111] p-3 font-mono text-xs shadow-xl">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <span className="truncate text-emerald-300">
+                @{referencePreview.path}
+              </span>
+              <button
+                type="button"
+                onClick={() => setReferencePreview(null)}
+                className="text-slate-500 hover:text-slate-300"
+              >
+                Close
+              </button>
+            </div>
+            <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded bg-black/30 p-2 text-slate-300">
+              {referencePreview.content}
+              {referencePreview.truncated ? '\n[truncated]' : ''}
+            </pre>
+          </div>
+        )}
+        {referenceChips.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2 font-mono text-[11px]">
+            {referenceChips.map((referencePath) => (
+              <button
+                key={referencePath}
+                type="button"
+                onClick={() => void fetchReferencePreview(referencePath)}
+                className="rounded border border-emerald-500/20 bg-emerald-950/20 px-2 py-1 text-emerald-200 hover:bg-emerald-900/30"
+              >
+                @{referencePath}
+              </button>
+            ))}
+          </div>
+        )}
+        {referenceResults.length > 0 && (
+          <div className="mb-2 rounded border border-white/10 bg-[#111111] font-mono text-xs shadow-xl">
+            {referenceResults.map((result) => (
+              <button
+                key={result.path}
+                type="button"
+                onClick={() => {
+                  setInput((current) =>
+                    replaceActiveReference(current, result.path),
+                  );
+                  setReferenceResults([]);
+                  inputRef.current?.focus();
+                }}
+                className="grid w-full grid-cols-[90px_1fr] gap-3 px-3 py-2 text-left hover:bg-white/5"
+              >
+                <span className="text-slate-500">{result.type}</span>
+                <span className="truncate text-emerald-300">
+                  @{result.path}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
         {visibleSlashCommands.length > 0 && (
           <div className="mb-2 rounded border border-white/10 bg-[#111111] font-mono text-xs shadow-xl">
             {visibleSlashCommands.map((command) => (
