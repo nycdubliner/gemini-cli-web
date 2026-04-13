@@ -62,6 +62,30 @@ interface ConfirmationRequest {
   serverName?: string;
 }
 
+type ToolConfirmationOutcome =
+  | 'proceed_once'
+  | 'proceed_always'
+  | 'cancel';
+
+interface ToolCall {
+  status: string;
+  request: {
+    callId: string;
+    name: string;
+    args: unknown;
+  };
+  response?: {
+    resultDisplay?: unknown;
+    error?: unknown;
+  };
+  durationMs?: number;
+}
+
+interface ToolCallsUpdateMessage {
+  schedulerId: string;
+  toolCalls: ToolCall[];
+}
+
 interface Metadata {
   workspace: string;
   branch: string;
@@ -253,6 +277,28 @@ function isConfirmationRequest(value: unknown): value is ConfirmationRequest {
   );
 }
 
+function isToolCall(value: unknown): value is ToolCall {
+  return (
+    isRecord(value) &&
+    isString(value['status']) &&
+    isRecord(value['request']) &&
+    isString(value['request']['callId']) &&
+    isString(value['request']['name']) &&
+    (value['durationMs'] === undefined || isNumber(value['durationMs']))
+  );
+}
+
+function isToolCallsUpdateMessage(
+  value: unknown,
+): value is ToolCallsUpdateMessage {
+  return (
+    isRecord(value) &&
+    isString(value['schedulerId']) &&
+    Array.isArray(value['toolCalls']) &&
+    value['toolCalls'].every(isToolCall)
+  );
+}
+
 export function App() {
   const [authToken, setAuthToken] = useState(
     () => localStorage.getItem('gemini-web-token') ?? '',
@@ -271,6 +317,7 @@ export function App() {
     null,
   );
   const [metadata, setMetadata] = useState<Metadata | null>(null);
+  const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
   const [referenceResults, setReferenceResults] = useState<
     ReferenceSearchResult[]
@@ -617,6 +664,11 @@ export function App() {
         isConfirmationRequest(msg['payload'])
       ) {
         setConfirmation(msg['payload']);
+      } else if (
+        msg['type'] === 'tool_calls_update' &&
+        isToolCallsUpdateMessage(msg['payload'])
+      ) {
+        setToolCalls(msg['payload'].toolCalls);
       } else if (msg['type'] === 'error' && isString(msg['error'])) {
         setMessages((prev) => [
           ...prev,
@@ -670,13 +722,14 @@ export function App() {
     setIsLoading(true);
   };
 
-  const respondToConfirmation = (confirmed: boolean) => {
+  const respondToConfirmation = (outcome: ToolConfirmationOutcome) => {
     if (!confirmation || !ws.current) return;
     ws.current.send(
       JSON.stringify({
         type: 'confirmation_response',
         correlationId: confirmation.correlationId,
-        confirmed,
+        confirmed: outcome !== 'cancel',
+        outcome,
       }),
     );
     setConfirmation(null);
@@ -696,6 +749,9 @@ export function App() {
         .slice(0, 6)
     : [];
   const referenceChips = getReferenceChips(input);
+  const activeToolCalls = toolCalls.filter(
+    (toolCall) => toolCall.status !== 'success' || toolCall.response,
+  );
 
   if (authRequired && !authToken) {
     return (
@@ -833,6 +889,60 @@ export function App() {
         )}
       </main>
 
+      {activeToolCalls.length > 0 && (
+        <div className="mx-4 mb-3 space-y-2 font-mono">
+          {activeToolCalls.map((toolCall) => (
+            <div
+              key={toolCall.request.callId}
+              className="rounded border border-white/10 bg-[#121212] p-3 text-xs"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate text-slate-100">
+                    {toolCall.request.name}
+                  </div>
+                  <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                    {toolCall.status}
+                    {toolCall.durationMs
+                      ? ` · ${Math.round(toolCall.durationMs)}ms`
+                      : ''}
+                  </div>
+                </div>
+                <span
+                  className={clsx(
+                    'rounded px-2 py-1 text-[10px] uppercase',
+                    toolCall.status === 'success'
+                      ? 'bg-emerald-900/30 text-emerald-300'
+                      : '',
+                    toolCall.status === 'error' ||
+                      toolCall.status === 'cancelled'
+                      ? 'bg-red-900/30 text-red-300'
+                      : '',
+                    toolCall.status !== 'success' &&
+                      toolCall.status !== 'error' &&
+                      toolCall.status !== 'cancelled'
+                      ? 'bg-amber-900/30 text-amber-300'
+                      : '',
+                  )}
+                >
+                  {toolCall.status}
+                </span>
+              </div>
+              <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded bg-black/30 p-2 text-[11px] text-slate-400">
+                {JSON.stringify(toolCall.request.args, null, 2)}
+              </pre>
+              {toolCall.response?.resultDisplay !== undefined && (
+                <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-black/30 p-2 text-[11px] text-slate-300">
+                  {typeof toolCall.response.resultDisplay === 'string'
+                    ? toolCall.response.resultDisplay
+                    : JSON.stringify(toolCall.response.resultDisplay, null, 2)}
+                </pre>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Tool Confirmation Overlay (matches screenshot style) */}
       {confirmation && (
         <div className="mx-4 mb-4 bg-[#1a1a1a] border border-amber-500/30 rounded-lg p-3 shadow-2xl animate-in fade-in slide-in-from-bottom-2">
@@ -858,16 +968,22 @@ export function App() {
           </div>
           <div className="flex justify-end gap-2 mt-3">
             <button
-              onClick={() => respondToConfirmation(false)}
+              onClick={() => respondToConfirmation('cancel')}
               className="px-3 py-1 rounded text-[10px] font-bold uppercase tracking-tight bg-slate-800 hover:bg-slate-700 transition-colors"
             >
               Deny
             </button>
             <button
-              onClick={() => respondToConfirmation(true)}
+              onClick={() => respondToConfirmation('proceed_always')}
+              className="px-3 py-1 rounded text-[10px] font-bold uppercase tracking-tight bg-slate-700 hover:bg-slate-600 transition-colors text-white"
+            >
+              Always Allow
+            </button>
+            <button
+              onClick={() => respondToConfirmation('proceed_once')}
               className="px-3 py-1 rounded text-[10px] font-bold uppercase tracking-tight bg-amber-600 hover:bg-amber-500 transition-colors text-white shadow-lg shadow-amber-900/20"
             >
-              Allow
+              Allow Once
             </button>
           </div>
         </div>
