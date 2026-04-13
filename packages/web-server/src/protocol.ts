@@ -23,7 +23,14 @@ export interface ClientConfirmationResponse {
   outcome?: ToolConfirmationOutcome;
 }
 
-export type ClientMessage = ClientChatMessage | ClientConfirmationResponse;
+export interface ClientCancelStreamMessage {
+  type: 'cancel_stream';
+}
+
+export type ClientMessage =
+  | ClientChatMessage
+  | ClientConfirmationResponse
+  | ClientCancelStreamMessage;
 
 export interface WebTranscriptMessage {
   id: string;
@@ -135,6 +142,10 @@ export function parseClientMessage(data: string): ClientMessage {
 
   if (parsed['type'] === 'chat' && isString(parsed['text'])) {
     return { type: 'chat', text: parsed['text'] };
+  }
+
+  if (parsed['type'] === 'cancel_stream') {
+    return { type: 'cancel_stream' };
   }
 
   if (

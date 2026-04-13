@@ -40,6 +40,12 @@ describe('parseClientMessage', () => {
     });
   });
 
+  it('parses stream cancellation messages', () => {
+    expect(parseClientMessage('{"type":"cancel_stream"}')).toEqual({
+      type: 'cancel_stream',
+    });
+  });
+
   it('rejects malformed messages', () => {
     expect(() => parseClientMessage('{"type":"chat"}')).toThrow(
       /Invalid client message/,

@@ -737,6 +737,10 @@ export function App() {
     setConfirmation(null);
   };
 
+  const cancelRun = () => {
+    ws.current?.send(JSON.stringify({ type: 'cancel_stream' }));
+  };
+
   const trimmedInput = input.trim();
   const isSlashInput = trimmedInput === '?' || trimmedInput.startsWith('/');
   const slashQuery = trimmedInput === '?' ? 'help' : trimmedInput.slice(1);
@@ -1089,7 +1093,7 @@ export function App() {
           />
           <button
             type="submit"
-            disabled={!input.trim()}
+            disabled={!input.trim() || isLoading}
             className="text-slate-500 hover:text-blue-400 disabled:opacity-20 transition-colors"
           >
             {isLoading ? (
@@ -1098,6 +1102,15 @@ export function App() {
               <Send size={16} />
             )}
           </button>
+          {isLoading && (
+            <button
+              type="button"
+              onClick={cancelRun}
+              className="rounded bg-red-900/30 px-2 py-1 text-[10px] font-bold uppercase text-red-200 hover:bg-red-900/50"
+            >
+              Cancel
+            </button>
+          )}
         </form>
       </div>
 
