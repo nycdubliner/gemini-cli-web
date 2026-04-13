@@ -71,6 +71,24 @@ export class WebSessionStore {
     });
   }
 
+  appendSystemMessage(sessionId: string, content: string): WebTranscriptMessage {
+    return this.appendMessage(sessionId, {
+      role: 'system',
+      content,
+    });
+  }
+
+  clear(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return;
+    }
+
+    session.messages = [];
+    session.updatedAt = new Date().toISOString();
+    session.updateOrder = this.nextUpdateOrder++;
+  }
+
   startModelMessage(sessionId: string): WebTranscriptMessage {
     return this.appendMessage(sessionId, {
       role: 'model',

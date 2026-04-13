@@ -45,6 +45,23 @@ describe('WebSessionStore', () => {
     ]);
   });
 
+  it('tracks system messages and clears a session transcript', () => {
+    const store = new WebSessionStore();
+
+    store.appendUserMessage('session-1', 'hello');
+    const system = store.appendSystemMessage('session-1', 'Transcript cleared.');
+    store.clear('session-1');
+    store.appendSystemMessage('session-1', 'Ready.');
+
+    expect(system.role).toBe('system');
+    expect(store.get('session-1')?.messages).toEqual([
+      expect.objectContaining({
+        role: 'system',
+        content: 'Ready.',
+      }),
+    ]);
+  });
+
   it('lists sessions by most recent update', () => {
     const store = new WebSessionStore();
 
