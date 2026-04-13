@@ -90,7 +90,7 @@
 (allow file-ioctl (regex #"^/dev/tty.*"))
 
 ;; allow inbound network traffic on debugger port
-(allow network-inbound (local ip "localhost:9229"))
+(allow network-inbound (local ip "localhost:3999"))
 
 ;; allow outbound network traffic through proxy on localhost:8877
 ;; set `GEMINI_SANDBOX_PROXY_COMMAND=<command>` to run proxy alongside sandbox

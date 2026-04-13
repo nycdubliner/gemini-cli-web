@@ -430,7 +430,7 @@ export async function start_sandbox(
 
     // if DEBUG is set, expose debugging port
     if (process.env['DEBUG']) {
-      const debugPort = process.env['DEBUG_PORT'] || '9229';
+      const debugPort = process.env['DEBUG_PORT'] || '3999';
       args.push(`--publish`, `${debugPort}:${debugPort}`);
     }
 

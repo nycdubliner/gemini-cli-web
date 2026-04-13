@@ -18,7 +18,7 @@ interface for Network and Console inspection. Launched automatically when the
 
 When `general.devtools` is enabled, the CLI's `devtoolsService` automatically:
 
-1. Probes port 25417 for an existing DevTools instance
+1. Probes port 3003 for an existing DevTools instance
 2. If found, connects as a WebSocket client
 3. If not, starts a new DevTools server and connects to it
 4. If another instance races for the port, the loser connects to the winner
@@ -37,7 +37,7 @@ gemini.tsx / nonInteractiveCli.ts
   activityLogger.ts           ← pure logging (capture, file, WebSocket transport)
          │  (events)
          ▼
-  DevTools server (:25417)    ← this package (HTTP + WebSocket + SSE)
+  DevTools server (:3003)    ← this package (HTTP + WebSocket + SSE)
          │  (SSE /events)
          ▼
   DevTools UI (React)         ← client/ compiled by esbuild

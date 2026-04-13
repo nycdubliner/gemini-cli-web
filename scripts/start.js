@@ -50,7 +50,7 @@ const isInDebugMode = process.env.DEBUG === '1' || process.env.DEBUG === 'true';
 
 if (isInDebugMode && !sandboxCommand) {
   if (process.env.SANDBOX) {
-    const port = process.env.DEBUG_PORT || '9229';
+    const port = process.env.DEBUG_PORT || '3999';
     nodeArgs.push(`--inspect-brk=0.0.0.0:${port}`);
   } else {
     nodeArgs.push('--inspect-brk');

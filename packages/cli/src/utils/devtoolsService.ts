@@ -18,7 +18,7 @@ interface IDevTools {
   getPort(): number;
 }
 
-const DEFAULT_DEVTOOLS_PORT = 25417;
+const DEFAULT_DEVTOOLS_PORT = 3003;
 const DEFAULT_DEVTOOLS_HOST = '127.0.0.1';
 const MAX_PROMOTION_ATTEMPTS = 3;
 let promotionAttempts = 0;

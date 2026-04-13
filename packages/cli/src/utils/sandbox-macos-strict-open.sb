@@ -125,7 +125,7 @@
 (allow file-ioctl (regex #"^/dev/tty.*"))
 
 ;; allow inbound network traffic on debugger port
-(allow network-inbound (local ip "localhost:9229"))
+(allow network-inbound (local ip "localhost:3999"))
 
 ;; allow all outbound network traffic
 (allow network-outbound)
