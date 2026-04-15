@@ -34,6 +34,11 @@ import {
   type WebSlashCommandService,
 } from './slash-commands.js';
 import {
+  createWebCommandMetadataProvider,
+  findWebSlashCommand,
+  type WebCommandMetadataProvider,
+} from './command-metadata.js';
+import {
   previewWorkspaceReference,
   processFileReferences,
   searchWorkspaceReferences,
@@ -46,6 +51,7 @@ interface WebServerOptions {
   policy: PolicyController;
   sessionStore?: WebSessionStore;
   slashCommandService?: WebSlashCommandService;
+  commandMetadataProvider?: WebCommandMetadataProvider;
 }
 
 interface ConnectedClient {
@@ -96,6 +102,9 @@ export function createWebServer({
   policy,
   sessionStore = new WebSessionStore(),
   slashCommandService = createWebSlashCommandService(),
+  commandMetadataProvider = createWebCommandMetadataProvider(() =>
+    slashCommandService.list(),
+  ),
 }: WebServerOptions): http.Server {
   const app = express();
   const server = http.createServer(app);
@@ -199,8 +208,12 @@ export function createWebServer({
     res.json({ sessions: sessionStore.list() });
   });
 
-  app.get('/api/slash-commands', (_req, res) => {
-    res.json({ commands: slashCommandService.list() });
+  app.get('/api/slash-commands', async (_req, res) => {
+    try {
+      res.json({ commands: await commandMetadataProvider.list() });
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
   });
 
   app.get('/api/references/search', async (req, res) => {
@@ -404,6 +417,35 @@ export function createWebServer({
                 sendSessionState();
                 sendJson(ws, { type: 'stream_end' });
                 return;
+              }
+
+              const trimmed = msg.text.trim();
+              if (trimmed.startsWith('/') || trimmed === '?') {
+                const normalized = trimmed === '?' ? '/help' : trimmed;
+                const [commandName = ''] = normalized
+                  .slice(1)
+                  .trim()
+                  .split(/\s+/, 1);
+                const knownCommand = findWebSlashCommand(
+                  await commandMetadataProvider.list(),
+                  commandName,
+                );
+                if (knownCommand) {
+                  const message = `${knownCommand.usage} is visible from the terminal CLI command registry, but web execution for it is not implemented yet.`;
+                  sessionStore.appendUserMessage(session.id, msg.text);
+                  sessionStore.appendSystemMessage(session.id, message);
+                  sendJson(ws, {
+                    type: 'slash_command',
+                    payload: {
+                      command: knownCommand.name,
+                      status: 'error',
+                      message,
+                    },
+                  });
+                  sendSessionState();
+                  sendJson(ws, { type: 'stream_end' });
+                  return;
+                }
               }
 
               audit('prompt', session.id, msg.text);
