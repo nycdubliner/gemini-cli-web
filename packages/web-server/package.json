@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@google/gemini-cli": "file:../cli",
     "@google/gemini-cli-sdk": "file:../sdk",
     "express": "^4.19.2",
     "ws": "^8.17.0",

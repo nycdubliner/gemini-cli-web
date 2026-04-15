@@ -18,6 +18,10 @@ web CLI.
 - Command metadata adapter tests now require every current terminal built-in to
   be either supported, web-overridden, or explicitly classified in the parity
   exclusion map.
+- `/api/slash-commands` now merges web-specific handlers with terminal built-in
+  command metadata from the upstream command registry. Commands that are visible
+  through this metadata but not executable in web return an explicit unsupported
+  message instead of falling through as model prompts.
 
 ## Highest Value Gaps
 
@@ -26,10 +30,10 @@ web CLI.
    `CommandService` with `BuiltinCommandLoader`, `SkillCommandLoader`,
    `McpPromptLoader`, and `FileCommandLoader`. The web CLI currently has a
    separate small command table. The web protocol can now represent nested
-   command trees, but the next step is exposing the real registry from the web
-   server and adapting command action outputs into web transcript/UI events.
-   The command adapter and parity exclusion map provide the test foundation for
-   this bridge.
+   command trees, and the web server now exposes terminal built-in command
+   metadata. The next step is adapting command action outputs into web
+   transcript/UI events, then adding skills, MCP prompts, and file commands to
+   the metadata source.
 
 2. Add web equivalents for command result types.
    Terminal commands can return messages, dialogs, submitted prompts, tool
