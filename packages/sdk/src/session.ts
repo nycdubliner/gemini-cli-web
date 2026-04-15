@@ -112,6 +112,22 @@ export class GeminiCliSession {
     this.config.setApprovalMode(mode);
   }
 
+  getModel(): string {
+    return this.config.getModel();
+  }
+
+  setModel(model: string, persist: boolean = false): void {
+    this.config.setModel(model, !persist);
+  }
+
+  getQuota(): { remaining?: number; limit?: number; resetTime?: string } {
+    return {
+      remaining: this.config.getQuotaRemaining(),
+      limit: this.config.getQuotaLimit(),
+      resetTime: this.config.getQuotaResetTime(),
+    };
+  }
+
   async initialize(): Promise<void> {
     if (this.initialized) return;
 

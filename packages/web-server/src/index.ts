@@ -331,7 +331,6 @@ export function createWebServer({
           .resumeSession(sessionId)
           .catch(() => agent.session({ sessionId }));
         await session.initialize();
-        const state = sessionStore.ensure(session.id);
         const removeSession = policy.addSession(session);
 
         const messageBus = session.messageBus;
@@ -343,10 +342,19 @@ export function createWebServer({
           connectedAt: new Date().toISOString(),
         });
 
-        sendJson(ws, {
-          type: 'session_state',
-          payload: state,
-        });
+        const sendSessionState = () => {
+          const state = sessionStore.ensure(session.id);
+          sendJson(ws, {
+            type: 'session_state',
+            payload: {
+              ...state,
+              model: session.getModel(),
+              quota: session.getQuota(),
+            },
+          });
+        };
+
+        sendSessionState();
 
         const onConfirmationRequest = async (
           message: ToolConfirmationRequest,
@@ -381,6 +389,7 @@ export function createWebServer({
                 sessionId: session.id,
                 sessionStore,
                 policy,
+                session,
               });
               if (slashCommandResult.handled) {
                 sendJson(ws, {
@@ -392,10 +401,7 @@ export function createWebServer({
                     action: slashCommandResult.action,
                   },
                 });
-                sendJson(ws, {
-                  type: 'session_state',
-                  payload: sessionStore.ensure(session.id),
-                });
+                sendSessionState();
                 sendJson(ws, { type: 'stream_end' });
                 return;
               }
@@ -414,10 +420,7 @@ export function createWebServer({
                     .map((reference) => `@${reference.path}`)
                     .join(', ')}`,
                 );
-                sendJson(ws, {
-                  type: 'session_state',
-                  payload: sessionStore.ensure(session.id),
-                });
+                sendSessionState();
               }
               const modelMessage = sessionStore.startModelMessage(session.id);
               const runController = activeAbortController;
@@ -452,10 +455,7 @@ export function createWebServer({
               sessionStore.finishModelMessage(session.id, modelMessage.id);
               if (wasCancelled) {
                 sessionStore.appendSystemMessage(session.id, 'Run cancelled.');
-                sendJson(ws, {
-                  type: 'session_state',
-                  payload: sessionStore.ensure(session.id),
-                });
+                sendSessionState();
               }
               sendJson(ws, { type: 'stream_end' });
             } else if (msg.type === 'confirmation_response') {
