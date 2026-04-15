@@ -22,6 +22,7 @@ interface SlashCommand {
   description: string;
   usage: string;
   altNames?: string[];
+  subCommands?: SlashCommand[];
 }
 
 interface SlashCommandsResponse {
@@ -110,9 +111,17 @@ interface SessionResponse {
   session?: SessionState;
 }
 
+interface Quota {
+  remaining?: number;
+  limit?: number;
+  resetTime?: string;
+}
+
 interface SessionState {
   sessionId: string;
   messages: Message[];
+  model?: string;
+  quota?: Quota;
 }
 
 interface SessionStateResponse {
@@ -148,6 +157,32 @@ function getReferenceChips(value: string): string[] {
   return Array.from(value.matchAll(/(?:^|\s)@([^\s]+)/g), (match) => match[1]);
 }
 
+function flattenSlashCommands(commands: SlashCommand[]): SlashCommand[] {
+  const flattened: SlashCommand[] = [];
+  const visit = (command: SlashCommand) => {
+    flattened.push(command);
+    command.subCommands?.forEach(visit);
+  };
+
+  commands.forEach(visit);
+  return flattened;
+}
+
+function getSlashCommandInsertion(command: SlashCommand): string {
+  return `${command.usage
+    .replace(/\s+\[.*$/, '')
+    .replace(/\s+<.*$/, '')
+    .trim()} `;
+}
+
+function formatQuota(quota: Quota | null): string {
+  if (quota?.remaining === undefined || quota.limit === undefined) {
+    return 'quota unavailable';
+  }
+
+  return `${quota.remaining}/${quota.limit} left`;
+}
+
 function isMetadata(value: unknown): value is Metadata {
   return (
     isRecord(value) &&
@@ -170,6 +205,15 @@ function isHealthResponse(value: unknown): value is HealthResponse {
   return isRecord(value) && isBoolean(value['authRequired']);
 }
 
+function isQuota(value: unknown): value is Quota {
+  return (
+    isRecord(value) &&
+    (value['remaining'] === undefined || isNumber(value['remaining'])) &&
+    (value['limit'] === undefined || isNumber(value['limit'])) &&
+    (value['resetTime'] === undefined || isString(value['resetTime']))
+  );
+}
+
 function isSessionResponse(value: unknown): value is SessionResponse {
   return (
     isRecord(value) &&
@@ -183,7 +227,9 @@ function isSessionState(value: unknown): value is SessionState {
     isRecord(value) &&
     isString(value['sessionId']) &&
     Array.isArray(value['messages']) &&
-    value['messages'].every(isMessage)
+    value['messages'].every(isMessage) &&
+    (value['model'] === undefined || isString(value['model'])) &&
+    (value['quota'] === undefined || isQuota(value['quota']))
   );
 }
 
@@ -211,7 +257,10 @@ function isSlashCommand(value: unknown): value is SlashCommand {
     isString(value['description']) &&
     isString(value['usage']) &&
     (value['altNames'] === undefined ||
-      (Array.isArray(value['altNames']) && value['altNames'].every(isString)))
+      (Array.isArray(value['altNames']) && value['altNames'].every(isString))) &&
+    (value['subCommands'] === undefined ||
+      (Array.isArray(value['subCommands']) &&
+        value['subCommands'].every(isSlashCommand)))
   );
 }
 
@@ -319,6 +368,7 @@ export function App() {
     null,
   );
   const [metadata, setMetadata] = useState<Metadata | null>(null);
+  const [currentQuota, setCurrentQuota] = useState<Quota | null>(null);
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
   const [referenceResults, setReferenceResults] = useState<
@@ -438,6 +488,12 @@ export function App() {
       }
 
       setMessages(data.session.messages);
+      if (data.session.model) {
+        setMetadata((prev) =>
+          prev ? { ...prev, model: data.session.model! } : null,
+        );
+      }
+      setCurrentQuota(data.session.quota ?? null);
       setSessionId(data.session.sessionId);
       setPreferredSessionId(data.session.sessionId);
       localStorage.setItem('gemini-web-session-id', data.session.sessionId);
@@ -484,8 +540,15 @@ export function App() {
         setSessionId(data.sessionId);
         setPreferredSessionId(data.sessionId);
         localStorage.setItem('gemini-web-session-id', data.sessionId);
-        if (data.session) {
-          setMessages(data.session.messages);
+        const session = data.session;
+        if (session) {
+          setMessages(session.messages);
+          if (session.model) {
+            setMetadata((prev) =>
+              prev ? { ...prev, model: session.model! } : null,
+            );
+          }
+          setCurrentQuota(session.quota ?? null);
         }
         void fetchMetadata();
         void fetchSlashCommands();
@@ -623,20 +686,26 @@ export function App() {
         return;
       }
 
-      if (msg['type'] === 'session_state' && isSessionState(msg['payload'])) {
-        setMessages(msg['payload'].messages);
+      const payload = msg['payload'];
+      if (msg['type'] === 'session_state' && isSessionState(payload)) {
+        setMessages(payload.messages);
+        if (payload.model) {
+          setMetadata((prev) =>
+            prev ? { ...prev, model: payload.model! } : null,
+          );
+        }
+        setCurrentQuota(payload.quota ?? null);
       } else if (
         msg['type'] === 'slash_command' &&
-        isSlashCommandMessage(msg['payload'])
+        isSlashCommandMessage(payload)
       ) {
-        if (msg['payload'].action === 'clear') {
+        if (payload.action === 'clear') {
           setMessages([]);
         }
-        if (msg['payload'].command === 'yolo') {
+        if (payload.command === 'yolo') {
           void fetchMetadata();
         }
-      } else if (msg['type'] === 'gemini_event' && isRecord(msg['payload'])) {
-        const payload = msg['payload'];
+      } else if (msg['type'] === 'gemini_event' && isRecord(payload)) {
         if (payload['type'] === 'content' && isString(payload['value'])) {
           const content = payload['value'];
           setMessages((prev) => {
@@ -744,8 +813,9 @@ export function App() {
   const trimmedInput = input.trim();
   const isSlashInput = trimmedInput === '?' || trimmedInput.startsWith('/');
   const slashQuery = trimmedInput === '?' ? 'help' : trimmedInput.slice(1);
+  const searchableSlashCommands = flattenSlashCommands(slashCommands);
   const visibleSlashCommands = isSlashInput
-    ? slashCommands
+    ? searchableSlashCommands
         .filter(
           (command) =>
             command.name.startsWith(slashQuery) ||
@@ -1060,10 +1130,10 @@ export function App() {
           <div className="mb-2 rounded border border-white/10 bg-[#111111] font-mono text-xs shadow-xl">
             {visibleSlashCommands.map((command) => (
               <button
-                key={command.name}
+                key={command.usage}
                 type="button"
                 onClick={() => {
-                  setInput(`${command.usage} `);
+                  setInput(getSlashCommandInsertion(command));
                   inputRef.current?.focus();
                 }}
                 className="grid w-full grid-cols-[120px_1fr] gap-3 px-3 py-2 text-left hover:bg-white/5"
@@ -1115,7 +1185,7 @@ export function App() {
       </div>
 
       {/* Footer (matches screenshot style) */}
-      <footer className="grid grid-cols-4 gap-4 px-4 py-3 bg-[#080808] border-t border-white/5 text-[10px] font-mono uppercase tracking-tight text-slate-500">
+      <footer className="grid grid-cols-5 gap-4 px-4 py-3 bg-[#080808] border-t border-white/5 text-[10px] font-mono uppercase tracking-tight text-slate-500">
         <div>
           <div className="opacity-50 mb-0.5">workspace (/directory)</div>
           <div className="text-slate-300 truncate" title={metadata?.workspace}>
@@ -1138,6 +1208,18 @@ export function App() {
             )}
           >
             {metadata?.sandbox ?? '...'}
+          </div>
+        </div>
+        <div>
+          <div className="opacity-50 mb-0.5">/model</div>
+          <div className="text-slate-300 truncate">
+            {metadata?.model ?? '...'}
+          </div>
+          <div
+            className="text-slate-500 truncate"
+            title={currentQuota?.resetTime}
+          >
+            {formatQuota(currentQuota)}
           </div>
         </div>
         <div className="text-right">

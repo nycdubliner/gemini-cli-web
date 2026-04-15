@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createWebSlashCommandService } from './slash-commands.js';
 import type { PolicyController, PolicySnapshot } from './policy.js';
 import { WebSessionStore } from './session-store.js';
+import type { GeminiCliSession } from '@google/gemini-cli-sdk';
 
 function createPolicy(): PolicyController {
   let allowAll = false;
@@ -28,17 +29,37 @@ function createPolicy(): PolicyController {
   };
 }
 
+function createSession(
+  quota: ReturnType<GeminiCliSession['getQuota']> = {},
+): GeminiCliSession {
+  return {
+    getModel: vi.fn(() => 'gemini-pro'),
+    setModel: vi.fn(),
+    getQuota: vi.fn(() => quota),
+  } as unknown as GeminiCliSession;
+}
+
 describe('createWebSlashCommandService', () => {
   it('lists discoverable commands', () => {
     const service = createWebSlashCommandService();
 
-    expect(service.list().map((command) => command.name)).toEqual([
+    const commands = service.list();
+    expect(commands.map((command) => command.name)).toEqual([
       'help',
       'commands',
       'about',
+      'model',
       'clear',
       'yolo',
     ]);
+    expect(commands.find((command) => command.name === 'model')).toMatchObject({
+      subCommands: [
+        {
+          name: 'set',
+          usage: '/model set <model-name> [--persist]',
+        },
+      ],
+    });
   });
 
   it('handles help commands as system transcript messages', () => {
@@ -49,6 +70,7 @@ describe('createWebSlashCommandService', () => {
       sessionId: 'session-1',
       sessionStore: store,
       policy: createPolicy(),
+      session: createSession(),
     });
 
     expect(result.handled).toBe(true);
@@ -57,7 +79,9 @@ describe('createWebSlashCommandService', () => {
       expect.objectContaining({ role: 'user', content: '/help' }),
       expect.objectContaining({
         role: 'system',
-        content: expect.stringContaining('/commands'),
+        content: expect.stringContaining(
+          '/model set <model-name> [--persist]',
+        ),
       }),
     ]);
   });
@@ -71,6 +95,7 @@ describe('createWebSlashCommandService', () => {
       sessionId: 'session-1',
       sessionStore: store,
       policy: createPolicy(),
+      session: createSession(),
     });
 
     expect(result).toEqual({
@@ -97,6 +122,7 @@ describe('createWebSlashCommandService', () => {
       sessionId: 'session-1',
       sessionStore: store,
       policy,
+      session: createSession(),
     });
 
     expect(result.handled).toBe(true);
@@ -114,7 +140,93 @@ describe('createWebSlashCommandService', () => {
         sessionId: 'session-1',
         sessionStore: new WebSessionStore(),
         policy: createPolicy(),
+        session: createSession(),
       }),
     ).toEqual({ handled: false });
+  });
+
+  it('handles /model command to view model', () => {
+    const service = createWebSlashCommandService();
+    const store = new WebSessionStore();
+    const session = createSession({
+      remaining: 25,
+      limit: 100,
+      resetTime: 'tomorrow',
+    });
+
+    const result = service.execute('/model', {
+      sessionId: 'session-1',
+      sessionStore: store,
+      policy: createPolicy(),
+      session,
+    });
+
+    expect(result.handled).toBe(true);
+    expect(session.getModel).toHaveBeenCalled();
+    expect(store.get('session-1')?.messages.at(-1)?.content).toBe(
+      'Current model: gemini-pro\nQuota: 25 / 100 remaining, resets tomorrow',
+    );
+  });
+
+  it('handles /model set command to change model', () => {
+    const service = createWebSlashCommandService();
+    const store = new WebSessionStore();
+    const session = createSession();
+
+    const result = service.execute('/model set gemini-flash', {
+      sessionId: 'session-1',
+      sessionStore: store,
+      policy: createPolicy(),
+      session,
+    });
+
+    expect(result.handled).toBe(true);
+    expect(session.setModel).toHaveBeenCalledWith('gemini-flash', false);
+    expect(store.get('session-1')?.messages.at(-1)?.content).toBe(
+      'Model set to gemini-flash',
+    );
+  });
+
+  it('handles /model set --persist to persist the model', () => {
+    const service = createWebSlashCommandService();
+    const store = new WebSessionStore();
+    const session = createSession();
+
+    const result = service.execute('/model set gemini-flash --persist', {
+      sessionId: 'session-1',
+      sessionStore: store,
+      policy: createPolicy(),
+      session,
+    });
+
+    expect(result.handled).toBe(true);
+    expect(session.setModel).toHaveBeenCalledWith('gemini-flash', true);
+    expect(store.get('session-1')?.messages.at(-1)?.content).toBe(
+      'Model set to gemini-flash (persisted)',
+    );
+  });
+
+  it('rejects malformed /model set commands', () => {
+    const service = createWebSlashCommandService();
+    const store = new WebSessionStore();
+    const session = createSession();
+
+    const result = service.execute('/model set --persist', {
+      sessionId: 'session-1',
+      sessionStore: store,
+      policy: createPolicy(),
+      session,
+    });
+
+    expect(result).toEqual({
+      handled: true,
+      command: 'model',
+      status: 'error',
+      message: 'Usage: /model set <model-name> [--persist]',
+    });
+    expect(session.setModel).not.toHaveBeenCalled();
+    expect(store.get('session-1')?.messages.at(-1)?.content).toBe(
+      'Usage: /model set <model-name> [--persist]',
+    );
   });
 });

@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type { GeminiCliSession } from '@google/gemini-cli-sdk';
 import type { PolicyController } from './policy.js';
 import type { WebSlashCommand } from './protocol.js';
 import type { WebSessionStore } from './session-store.js';
@@ -22,6 +23,7 @@ interface ExecuteContext {
   sessionId: string;
   sessionStore: WebSessionStore;
   policy: PolicyController;
+  session: GeminiCliSession;
 }
 
 type SlashCommandHandler = (
@@ -34,9 +36,25 @@ interface SlashCommandDefinition extends WebSlashCommand {
 }
 
 function formatCommandList(commands: readonly WebSlashCommand[]): string {
-  return commands
-    .map((command) => `${command.usage} - ${command.description}`)
-    .join('\n');
+  const lines: string[] = [];
+  const visit = (command: WebSlashCommand) => {
+    lines.push(`${command.usage} - ${command.description}`);
+    for (const subCommand of command.subCommands ?? []) {
+      visit(subCommand);
+    }
+  };
+
+  commands.forEach(visit);
+  return lines.join('\n');
+}
+
+function formatQuota(quota: ReturnType<GeminiCliSession['getQuota']>): string {
+  if (quota.limit === undefined || quota.remaining === undefined) {
+    return '';
+  }
+
+  const resetTime = quota.resetTime ? `, resets ${quota.resetTime}` : '';
+  return `\nQuota: ${quota.remaining} / ${quota.limit} remaining${resetTime}`;
 }
 
 export class WebSlashCommandService {
@@ -109,6 +127,50 @@ export function createWebSlashCommandService(): WebSlashCommandService {
           `Session: ${sessionId}`,
         ].join('\n');
         sessionStore.appendUserMessage(sessionId, raw);
+        sessionStore.appendSystemMessage(sessionId, message);
+        return { status: 'success', message };
+      },
+    },
+    {
+      name: 'model',
+      usage: '/model [set <name> [--persist]]',
+      description: 'View the current model or set it by name',
+      subCommands: [
+        {
+          name: 'set',
+          usage: '/model set <model-name> [--persist]',
+          description: 'Set the model to use',
+        },
+      ],
+      handler: (raw, { sessionId, sessionStore, session }) => {
+        sessionStore.appendUserMessage(sessionId, raw);
+
+        const [, subCommand, ...args] = raw.trim().split(/\s+/);
+        if (subCommand === 'set') {
+          const persist = args.includes('--persist');
+          const modelName = args.find((part) => part !== '--persist');
+
+          if (!modelName) {
+            const message = 'Usage: /model set <model-name> [--persist]';
+            sessionStore.appendSystemMessage(sessionId, message);
+            return { status: 'error', message };
+          }
+
+          session.setModel(modelName, persist);
+          const message = `Model set to ${modelName}${persist ? ' (persisted)' : ''}`;
+          sessionStore.appendSystemMessage(sessionId, message);
+          return { status: 'success', message };
+        }
+
+        if (subCommand && subCommand !== 'set') {
+          const message = 'Usage: /model [set <model-name> [--persist]]';
+          sessionStore.appendSystemMessage(sessionId, message);
+          return { status: 'error', message };
+        }
+
+        const model = session.getModel();
+        const quota = session.getQuota();
+        const message = `Current model: ${model}${formatQuota(quota)}`;
         sessionStore.appendSystemMessage(sessionId, message);
         return { status: 'success', message };
       },

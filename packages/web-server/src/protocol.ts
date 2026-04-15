@@ -45,6 +45,7 @@ export interface WebSlashCommand {
   description: string;
   usage: string;
   altNames?: string[];
+  subCommands?: WebSlashCommand[];
 }
 
 export interface WebSessionSummary {
@@ -57,6 +58,12 @@ export interface WebSessionSummary {
 export interface WebSessionState {
   sessionId: string;
   messages: WebTranscriptMessage[];
+  model?: string;
+  quota?: {
+    remaining?: number;
+    limit?: number;
+    resetTime?: string;
+  };
 }
 
 export interface ServerSessionStateMessage {
