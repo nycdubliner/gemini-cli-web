@@ -15,6 +15,9 @@ web CLI.
   `/model`, and `/model set <model-name> [--persist]`.
 - Slash command metadata supports nested subcommands so the web client can
   present command trees rather than only flat commands.
+- Command metadata adapter tests now require every current terminal built-in to
+  be either supported, web-overridden, or explicitly classified in the parity
+  exclusion map.
 
 ## Highest Value Gaps
 
@@ -25,6 +28,8 @@ web CLI.
    separate small command table. The web protocol can now represent nested
    command trees, but the next step is exposing the real registry from the web
    server and adapting command action outputs into web transcript/UI events.
+   The command adapter and parity exclusion map provide the test foundation for
+   this bridge.
 
 2. Add web equivalents for command result types.
    Terminal commands can return messages, dialogs, submitted prompts, tool
